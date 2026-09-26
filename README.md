@@ -15,11 +15,13 @@ También funciona abriendo `index.html` directo en el navegador (desktop o telé
 - **Barra de movimiento**: lanzarte cuesta un fijo + un extra según la potencia, y la potencia queda limitada por la barra que te queda. El hover (apuntar en el aire) también gasta barra, cada vez más rápido, hasta un máximo de 2 s.
 - **Recarga**: orbes rompibles (una parte), núcleos (completa) y kills, que recargan más cuanto más alto es tu rango de estilo (D → S). El estilo sube con kills, combos, rebotes rápidos, esquivar balas de cerca y variar cartas; decae con el tiempo y con el daño. Cada rango también sube la potencia y la velocidad máxima.
 - **Move or die**: ir a menos de 400 px/s fuera de una zona segura llena el medidor de frío; lleno = −1 vida.
+- **Suelo**: pisar suelo sólido (no las baldosas teal ni la goma) llena el frío 3× más rápido aunque vayas rápido, frena tu inercia y encarece los lanzamientos (×1,5). No es insta-muerte, pero quedarte ahí sin barra sí lo es.
+- **Orbes**: mini trampolines; frenan lo que traés y te empujan hacia arriba, además de recargar barra.
 - **Objetivo**: romper todos los núcleos chocándolos a ≥ 650 px/s. Desde el nivel 2, un mini-jefe (3 golpes) escuda uno de ellos.
 - **Cartas (D-04 / D-07)**: build de 3 de 9 cartas en el menú; fila abajo a la derecha (o a la izquierda con los lados invertidos), doble toque = repetir última. Desktop: 1-3 al cursor, Q o clic derecho.
 - **Pasivas**: 1 ranura opcional con un trade-off sobre la barra (Tanque grande, Tacaño, Planeador, Adrenalina, Ancla). A futuro se desbloquean con logros; por ahora están todas abiertas.
 - **Mapas**: chunks de 16×16 hechos a mano, armados en una grilla 2D por semilla (3×2 en el nivel 1 hasta 4×4). Lo sólido solo existe en el suelo; arriba hay planetas y bloques rompibles.
-- **Enemigos**: caminante, volador, torreta y tanque; caminantes, torretas y tanques también viven sobre los planetas. Se matan chocando a ≥ 650 px/s (tanque y mini-jefe ≥ 1000).
+- **Enemigos**: caminante, volador, torreta y tanque; caminantes, torretas y tanques también viven sobre los planetas. Se matan chocando a ≥ 650 px/s (tanque y mini-jefe ≥ 1000). Avisan antes de atacar: el volador carga (línea punteada), embiste hacia donde vas a estar y después queda aturdido; la torreta marca con un láser y dispara una ráfaga de 3 balas con puntería predictiva; el caminante se agacha y salta hacia vos si te posás en su planeta. Cada golpe te quita 1 vida, 25 de barra y todas las cadenas.
 - **Power-ups** (en algunos orbes): turbo, barra congelada y escudo.
 
 Las perillas de calibración están en `CFG`, al inicio del script.

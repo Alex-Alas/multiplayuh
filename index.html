@@ -161,6 +161,12 @@ const CFG = {
   hoverCost: 15,      // barra/s al apuntar en el aire; sube hasta el doble al llegar a hoverMax
   hoverMax: 2,        // s máximos de hover; la gravedad vuelve de 0 a 1 en ese lapso
   orbRefill: 30,      // barra que da un orbe
+  orbBrake: .6, orbLift: 520, // orbe = mini trampolín: frena lo que traés (×orbBrake) y te empuja hacia arriba (vy mínimo −orbLift)
+  hurtBar: 25,        // barra que perdés con cada golpe (además de la vida y las cadenas)
+  floorCold: 3, floorCost: 1.5, // suelo sólido: el frío sube ×floorCold aunque vayas rápido; lanzarte desde ahí cuesta ×floorCost
+  dash: {range: 380, wind: .5, speed: 900, time: .45, tired: .8, cd: 1.6}, // volador: carga, embiste hacia donde vas a estar y queda aturdido
+  burst: {range: 650, aim: .6, n: 3, gap: .12, speed: 520, cd: 2.4},     // torreta: láser de aviso y ráfaga con puntería predictiva
+  leap: {tell: .3, time: .6, h: 70, cd: 1.4},                          // caminante: salta hacia vos si te posás en su planeta
   chainMax: 3,        // cadenas acumulables: cada kill, núcleo o bloque roto da un lanzamiento gratis
   padRefill: 25, padCap: .6, // baldosa segura: recarga barra/s hasta esa fracción de la barra
   coldSpeed: 400, coldTime: 2.5, coldRefill: 35, // move or die: por debajo de coldSpeed te enfriás (fuera de zona segura); lleno = −1 vida y algo de barra
@@ -284,10 +290,11 @@ function genLevel(seed, lvl) {
 }
 function enemy(type, x, by) {
   const r = {W: 16, F: 14, S: 16, T: 26}[type];
-  return {type, x, y: by - r - .01, vx: 0, vy: 0, r, hp: 1, iframe: 0, dir: 1, stun: 0, mark: 0, slow: 0, cd: 1 + Math.random(), grounded: false};
+  return {type, x, y: by - r - .01, vx: 0, vy: 0, r, hp: 1, iframe: 0, dir: 1, stun: 0, mark: 0, slow: 0, cd: 1 + Math.random(), grounded: false,
+    wind: 0, dash: 0, aim: 0, burst: 0, gap: 0, tell: 0, hop: 0, h: 0, tx: 0, ty: 0}; // wind/dash: embestida · aim/burst: ráfaga · tell/hop: salto
 }
-// enemigo pegado a la superficie de un planeta: se mueve por ángulo alrededor del centro
-const sit = e => { const d = e.pl.r + e.r; e.x = e.pl.x + Math.cos(e.ang) * d; e.y = e.pl.y + Math.sin(e.ang) * d; };
+// enemigo pegado a la superficie de un planeta: se mueve por ángulo alrededor del centro (h = altura del salto)
+const sit = e => { const d = e.pl.r + e.r + e.h; e.x = e.pl.x + Math.cos(e.ang) * d; e.y = e.pl.y + Math.sin(e.ang) * d; };
 function onPlanet(e, p, ang) { Object.assign(e, {pl: p, ang, dir: Math.random() < .5 ? -1 : 1}); sit(e); return e; }
 function planet(x, y, big, r) {
   return {x, y, big, ...CFG.planet[big ? 'P' : 'p'], c: big ? C.blue : C.slowed,
@@ -378,7 +385,7 @@ function world(sd, lv) {
   const L = genLevel(sd, lv);
   G = {...L, shots: [], splats: [], fx: [], time: 0, combo: 0, comboT: 0, shake: 0, kills: 0, slow: 0, stop: 0, ab: 0, glitch: 0, style: 0, cannon: true};
   P = {x: L.start.x, y: L.start.y - 13.01, vx: 0, vy: 0, r: 13, hp: 3, bar: barMax(), cold: 0, hovering: false, hoverT: 0, stored: 0, chain: 0,
-       grounded: false, rock: null, safe: false, inv: 0, parry: 0, ricochet: 0, trailT: 0, pound: false, pu: {turbo: 0, inf: 0, shield: 0}, trail: []};
+       grounded: false, rock: null, safe: false, floor: false, inv: 0, parry: 0, ricochet: 0, trailT: 0, pound: false, pu: {turbo: 0, inf: 0, shield: 0}, trail: []};
   for (const o of G.orbs) if (o.pl) { o.x = o.pl.x + Math.cos(o.a) * o.d; o.y = o.pl.y + Math.sin(o.a) * o.d; }
 }
 // barra y estilo
@@ -463,7 +470,7 @@ function playerHit(p, c, ax) {
     if (c === 'B' && s > 300) { p.vy = -v * rest; bounce(); return; }
     if (s > 900) splat(p.x, p.y + p.r, 6 + s / 150, C.yellow);
     p.vy = 0; p.grounded = true;
-    if (c === '=') P.safe = true;
+    if (c === '=') P.safe = true; else P.floor = true; // suelo sólido: "te recomiendo no quedarte acá"
   } else if (s > 300) { // pared o techo con rebote
     if (s > 900) addStyle(6);
     if (s > 500) splat(p.x + (ax ? Math.sign(v) * p.r : 0), p.y + (ax ? 0 : Math.sign(v) * p.r), 6 + s / 120, C.yellow);
@@ -485,7 +492,7 @@ function launchVec(dx, dy) {
   let f = Math.min(len, CFG.maxDrag) / CFG.maxDrag, cost = 0;
   const chain = P.chain > 0 && !(P.pu.inf > 0);
   if (!(P.pu.inf > 0) && !chain) {
-    const k = M.launchCost * (P.hovering ? M.hoverLaunch : 1), base = CFG.launchBase * k, pow = CFG.launchPow * k;
+    const k = M.launchCost * (P.hovering ? M.hoverLaunch : 1) * (P.floor ? CFG.floorCost : 1), base = CFG.launchBase * k, pow = CFG.launchPow * k;
     if (P.bar < base) return null;
     f = Math.min(f, (P.bar - base) / pow); cost = base + pow * f;
   }
@@ -568,7 +575,7 @@ function parryOk() {
 }
 function hurt(sx, sy, force) {
   if (!force && (P.inv > 0 || P.pu.shield > 0)) return;
-  P.hp--; P.inv = 1.2; G.combo = 0; addStyle(-120); G.shake = .3; G.ab = 6; G.glitch = .4;
+  P.hp--; P.inv = 1.2; G.combo = 0; P.chain = 0; P.bar = Math.max(0, P.bar - CFG.hurtBar); // un golpe también te quita opciones de escape addStyle(-120); G.shake = .3; G.ab = 6; G.glitch = .4;
   const n = norm(P.x - sx, P.y - sy); // empujón lejos del golpe (en un planeta, hacia afuera)
   P.vx = n.x * 560; P.vy = n.y * 560 - (P.rock ? 0 : 260); endHover();
   if (P.hp <= 0) gameOver();
@@ -597,8 +604,8 @@ function update(dt) {
       if (!(P.pu.inf > 0) && !P.chain) P.bar = Math.max(0, P.bar - CFG.hoverCost * (1 + P.hoverT / max) * dt);
       if (P.hoverT >= max || P.bar <= 0 && !P.chain) endHover(); else gs = P.hoverT / max;
     }
-    if (P.grounded) { const f = Math.exp(-5 * dt); P.vx *= f; if (P.rock) P.vy *= f; }
-    P.safe = false;
+    if (P.grounded) { const f = Math.exp((P.floor ? -12 : -5) * dt); P.vx *= f; if (P.rock) P.vy *= f; } // el suelo se come la inercia
+    P.safe = P.floor = false;
     move(P, dt, gs, playerHit, playerRock, gs);
     sp = Math.hypot(P.vx, P.vy);
     const vmax = CFG.maxSpeed * boost();
@@ -606,12 +613,17 @@ function update(dt) {
     P.trail.push({x: P.x, y: P.y, t: .45, k: P.trailT > 0});
     if ([-P.r + 2, P.r - 2].some(ox => { const y = P.y + P.r - 1; return tileAt(Math.floor((P.x + ox) / T), Math.floor(y / T)) === '^' && y % T > T / 2; })) hurt(P.x, P.y + T);
     // move or die: ir lento te enfría; el hover lo pausa y las zonas seguras (planetas y baldosas teal) lo descargan
+    // el suelo sólido enfría ×floorCold aunque vayas rápido; con invulnerabilidad el frío se queda lleno y pega apenas termina
     if (P.safe) {
       P.cold = Math.max(0, P.cold - dt * 2 / CFG.coldTime);
       if (!P.rock) P.bar = Math.max(P.bar, Math.min(barMax() * CFG.padCap, P.bar + CFG.padRefill * dt));
-    } else if (sp < CFG.coldSpeed) { if (!P.hovering) P.cold += dt / CFG.coldTime; }
+    } else if (P.floor) P.cold += CFG.floorCold * dt / CFG.coldTime;
+    else if (sp < CFG.coldSpeed) { if (!P.hovering) P.cold += dt / CFG.coldTime; }
     else P.cold = Math.max(0, P.cold - dt * 2 / CFG.coldTime);
-    if (P.cold >= 1) { P.cold = 0; addBar(CFG.coldRefill); fx('ring', {x: P.x, y: P.y, r: 50, c: C.blue}); hurt(P.x, P.y + 10); }
+    if (P.cold >= 1) {
+      if (P.inv > 0 || P.pu.shield > 0) P.cold = 1;
+      else { P.cold = 0; if (!P.floor) addBar(CFG.coldRefill); fx('ring', {x: P.x, y: P.y, r: 50, c: P.floor ? C.red : C.blue}); hurt(P.x, P.y + 10); }
+    }
   }
   P.trail = P.trail.filter(p => (p.t -= dt) > 0);
   if (state !== 'play') return;
@@ -630,13 +642,33 @@ function update(dt) {
       if (e.stun > 0) e.vy += CFG.gravity * .3 * dt;
       else { e.vx += (g.x * v - e.vx) * 3 * dt; e.vy += (g.y * v - e.vy) * 3 * dt; }
       move(e, dt, 0, flyHit, flyRock);
-    } else if (e.type === 'F') {
-      if (e.stun <= 0 && d < 520) { e.vx += (dx / d * 130 * sm - e.vx) * 2 * dt; e.vy += (dy / d * 130 * sm - e.vy) * 2 * dt; }
+    } else if (e.type === 'F') { // se acerca, carga apuntando a donde vas a estar, embiste en línea recta y queda aturdido (vulnerable)
+      const D = CFG.dash;
+      e.cd = Math.max(0, e.cd - dt);
+      if (e.dash > 0) { e.look = Math.atan2(e.vy, e.vx); if ((e.dash -= dt) <= 0) { e.stun = D.tired; e.vx *= .3; e.vy *= .3; } }
+      else if (e.wind > 0) {
+        e.vx *= .85; e.vy *= .85;
+        if (e.wind > .15 && !hid) { const t = Math.min(.6, d / D.speed); e.tx = P.x + P.vx * t; e.ty = P.y + P.vy * t; } // el último tramo queda fijo: se puede esquivar
+        e.look = Math.atan2(e.ty - e.y, e.tx - e.x);
+        if ((e.wind -= dt * sm) <= 0) { const g = norm(e.tx - e.x, e.ty - e.y); e.vx = g.x * D.speed * sm; e.vy = g.y * D.speed * sm; e.dash = D.time; }
+      } else if (e.stun <= 0 && d < D.range && e.cd <= 0) { e.wind = D.wind; e.cd = D.cd + Math.random(); }
+      else if (e.stun <= 0 && d < 520) { e.vx += (dx / d * 130 * sm - e.vx) * 2 * dt; e.vy += (dy / d * 130 * sm - e.vy) * 2 * dt; }
       else if (e.stun > 0) e.vy += CFG.gravity * .5 * dt;
       else { e.vx *= .98; e.vy = Math.sin(G.time * 2 + e.x) * 30; }
       move(e, dt, 0, flyHit, flyRock);
-    } else if (e.pl) { // camina alrededor de su planeta
-      if (e.stun <= 0 && e.type !== 'S') e.ang += e.dir * (e.type === 'T' ? 50 : 80) * sm / (e.pl.r + e.r) * dt;
+    } else if (e.pl) { // camina alrededor de su planeta; el caminante salta hacia vos si te posás en su planeta
+      const J = CFG.leap;
+      if (e.type === 'W') e.cd = Math.max(0, e.cd - dt);
+      if (e.hop > 0) {
+        e.hop = Math.min(1, e.hop + dt * sm / J.time); e.ang = e.a0 + e.da * e.hop; e.h = Math.sin(Math.PI * e.hop) * J.h;
+        if (e.hop >= 1) { e.hop = e.h = 0; e.cd = J.cd; }
+      } else if (e.tell > 0) {
+        if ((e.tell -= dt * sm) <= 0) {
+          const a = Math.atan2(P.y - e.pl.y, P.x - e.pl.x), da = Math.atan2(Math.sin(a - e.ang), Math.cos(a - e.ang));
+          e.a0 = e.ang; e.da = Math.max(-1.6, Math.min(1.6, da)); e.hop = .001; e.dir = Math.sign(da) || 1;
+        }
+      } else if (e.type === 'W' && e.stun <= 0 && !hid && P.rock === e.pl && e.cd <= 0) e.tell = J.tell;
+      else if (e.stun <= 0 && e.type !== 'S') e.ang += e.dir * (e.type === 'T' ? 50 : 80) * sm / (e.pl.r + e.r) * dt;
       sit(e);
     } else {
       if (e.stun <= 0 && e.grounded && e.type !== 'S') {
@@ -645,7 +677,18 @@ function update(dt) {
       } else if (e.grounded) e.vx *= .9;
       move(e, dt, 1, walkHit);
     }
-    if (e.type === 'S' && e.stun <= 0 && d < 650 && (e.cd -= dt * sm) <= 0) { e.cd = 2.2; G.shots.push({x: e.x, y: e.y, vx: dx / d * 380, vy: dy / d * 380, t: 4}); }
+    // torreta: láser de aviso que te sigue y después ráfaga que apunta a donde vas a estar
+    if (e.type === 'S' && e.stun <= 0 && !hid) {
+      const B = CFG.burst, lead = () => { const t = Math.min(.8, d / B.speed); e.tx = P.x + P.vx * t; e.ty = P.y + P.vy * t; };
+      if (e.aim > 0) { lead(); e.look = Math.atan2(e.ty - e.y, e.tx - e.x); if ((e.aim -= dt * sm) <= 0) { e.burst = B.n; e.gap = 0; } }
+      else if (e.burst > 0) {
+        if ((e.gap -= dt * sm) <= 0) {
+          lead(); const g = norm(e.tx - e.x, e.ty - e.y);
+          G.shots.push({x: e.x, y: e.y, vx: g.x * B.speed, vy: g.y * B.speed, t: 4});
+          e.gap = B.gap; if (--e.burst <= 0) e.cd = B.cd;
+        }
+      } else if (d < B.range && (e.cd -= dt * sm) <= 0) e.aim = B.aim;
+    }
     if (!hid && Math.hypot(P.x - e.x, P.y - e.y) < P.r + e.r) {
       const tough = e.type === 'T' || e.boss;
       const lethal = P.parry > 0 || P.pu.shield > 0 || sp >= (tough ? CFG.tankSpeed : CFG.killSpeed) || (!tough && (e.stun > 0 || e.mark > 0));
@@ -674,11 +717,14 @@ function update(dt) {
   G.shots = G.shots.filter(s => s.t > 0);
   if (hid) return;
 
-  // orbes: recargan barra y se rompen al tocarlos; algunos orbitan planetas
+  // orbes: mini trampolines que recargan barra y se rompen al tocarlos (frenan lo que traés pero te dan altura); algunos orbitan planetas
   for (const o of G.orbs) {
     if (o.pl) { o.a += o.w * dt; o.x = o.pl.x + Math.cos(o.a) * o.d; o.y = o.pl.y + Math.sin(o.a) * o.d; }
     if (o.got || Math.hypot(o.x - P.x, o.y - P.y) >= P.r + 14) continue;
     o.got = true; addBar(CFG.orbRefill * M.orbRefill); addStyle(10);
+    endHover();
+    P.vx *= CFG.orbBrake; P.vy = Math.min(P.vy * CFG.orbBrake, -CFG.orbLift);
+    splat(o.x, o.y + 10, 5, C.teal);
     if (M.orbHeal) P.hp = Math.min(3, P.hp + M.orbHeal);
     if (o.pu) P.pu[o.pu] = {turbo: 8, inf: 5, shield: 6}[o.pu];
     fx('ring', {x: o.x, y: o.y, r: 26, c: o.pu ? C.yellow : C.teal});
@@ -969,10 +1015,20 @@ function render(rdt) {
 
   // enemigos
   for (const e of G.enemies) {
+    // avisos: línea punteada de la embestida y láser de la torreta (se afinan al llegar el golpe)
+    if (e.wind > 0 || e.aim > 0) {
+      const k = e.wind > 0 ? 1 - e.wind / CFG.dash.wind : 1 - e.aim / CFG.burst.aim, g = norm(e.tx - e.x, e.ty - e.y), len = e.wind > 0 ? Math.hypot(e.tx - e.x, e.ty - e.y) : CFG.burst.range;
+      ctx.globalAlpha = .35 + k * .65; ctx.strokeStyle = C.red; ctx.lineWidth = e.wind > 0 ? 5 : 1.5 + k * 2;
+      if (e.wind > 0) ctx.setLineDash([10, 8]);
+      ctx.beginPath(); ctx.moveTo(e.x, e.y); ctx.lineTo(e.x + g.x * len, e.y + g.y * len); ctx.stroke();
+      ctx.setLineDash([]); ctx.globalAlpha = 1;
+    }
     ctx.save(); ctx.translate(e.x, e.y);
     const up = e.pl ? e.ang + Math.PI / 2 : 0, look = e.look ?? 0; // en un planeta, "abajo" apunta al centro
     ctx.rotate(up + (e.stun > 0 ? Math.sin(G.time * 30) * .3 : 0));
-    ctx.fillStyle = e.slow > 0 ? C.slowed : e.iframe > 0 ? C.paper : C.red;
+    if (e.tell > 0) ctx.scale(1.25, .7); // el caminante se agacha antes de saltar
+    const warn = (e.wind > 0 || e.aim > 0 || e.tell > 0) && Math.floor(G.time * 16) % 2;
+    ctx.fillStyle = e.slow > 0 ? C.slowed : e.iframe > 0 || warn ? C.paper : C.red;
     if (e.type === 'F') { ctx.rotate(look - up); ctx.beginPath(); ctx.moveTo(e.r * 1.3, 0); ctx.lineTo(-e.r, -e.r); ctx.lineTo(-e.r, e.r); ctx.fill(); ctx.fillStyle = C.ink; ctx.fillRect(0, -2.5, 5, 5); }
     else if (e.type === 'S') { circle(0, 0, e.r); ctx.fill(); const a = look - up; ctx.strokeStyle = C.red; ctx.lineWidth = 7.5; ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(Math.cos(a) * 26, Math.sin(a) * 26); ctx.stroke(); ctx.fillStyle = C.ink; ctx.fillRect(-2.5, -2.5, 5, 5); }
     else {
@@ -1002,14 +1058,14 @@ function render(rdt) {
   if (!G.demo && !(P.inv > 0 && Math.floor(G.time * 20) % 2)) {
     const st = Math.min(.35, sp / 4000);
     ctx.save(); ctx.translate(P.x, P.y); ctx.rotate(Math.atan2(P.vy, P.vx)); ctx.scale(1 + st, 1 - st * .7);
-    ctx.fillStyle = C.yellow; circle(0, 0, P.r); ctx.fill();
+    ctx.fillStyle = P.floor && Math.floor(G.time * 10) % 2 ? C.red : C.yellow; circle(0, 0, P.r); ctx.fill(); // en el suelo parpadea en tomate
     ctx.restore();
     const ex = Math.max(-4, Math.min(4, P.vx / 250)), ey = Math.max(-4, Math.min(3, P.vy / 300));
     ctx.fillStyle = C.ink; ctx.fillRect(P.x + ex - 6.25, P.y + ey - 6, ART, ART * 2.5); ctx.fillRect(P.x + ex + 3.75, P.y + ey - 6, ART, ART * 2.5);
     ctx.lineWidth = 2.5;
     if (sp >= CFG.killSpeed) { ctx.strokeStyle = C.paper; circle(P.x, P.y, P.r + 6); ctx.stroke(); }
     if (sp >= CFG.tankSpeed) { circle(P.x, P.y, P.r + 11); ctx.stroke(); }
-    if (P.cold > .3) { ctx.globalAlpha = P.cold; ctx.strokeStyle = C.blueHi; ctx.lineWidth = 2.5; ctx.setLineDash([5, 5]); circle(P.x, P.y, P.r + 4 + (1 - P.cold) * 20); ctx.stroke(); ctx.setLineDash([]); ctx.globalAlpha = 1; }
+    if (P.cold > .3) { ctx.globalAlpha = P.cold; ctx.strokeStyle = P.floor ? C.red : C.blueHi; ctx.lineWidth = 2.5; ctx.setLineDash([5, 5]); circle(P.x, P.y, P.r + 4 + (1 - P.cold) * 20); ctx.stroke(); ctx.setLineDash([]); ctx.globalAlpha = 1; }
     if (P.pu.shield > 0) { ctx.strokeStyle = C.blue; ctx.lineWidth = 5; circle(P.x, P.y, P.r + 16); ctx.stroke(); }
     if (P.parry > 0) { ctx.strokeStyle = C.paper; ctx.lineWidth = 5; circle(P.x, P.y, P.r + 20); ctx.stroke(); }
     for (let i = 0; i < P.chain; i++) { // cadenas: rombos que orbitan al jugador
@@ -1086,7 +1142,7 @@ function hud(sp) {
   if (cost) { ctx.fillStyle = C.red; ctx.fillRect(L + bw0 * (P.bar - cost) / bm, by0, bw0 * cost / bm, 14); }
   ctx.fillStyle = C.ink; for (let i = 1; i < bm / 25; i++) ctx.fillRect(L + bw0 * i * 25 / bm - 1, by0, 2, 14);
   // frío: se llena si vas lento
-  if (P.cold > 0) { ctx.fillStyle = C.blueHi; ctx.fillRect(L, by0 + 18, bw0 * P.cold, 5); }
+  if (P.cold > 0) { ctx.fillStyle = P.floor && Math.floor(G.time * 10) % 2 ? C.red : C.blueHi; ctx.fillRect(L, by0 + 18, bw0 * P.cold, 5); }
   // cadenas: lanzamientos gratis acumulados
   for (let i = 0; i < CFG.chainMax; i++) {
     ctx.save(); ctx.translate(L + bw0 + 16 + i * 18, by0 + 7); ctx.rotate(Math.PI / 4);
