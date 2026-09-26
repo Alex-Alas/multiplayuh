@@ -98,7 +98,7 @@ kbd{font:600 11px/1.6 "IBM Plex Mono",monospace;background:var(--bone);color:var
       <button id="fs" class="tog fs"><svg><use href="#i-fs"/></svg><span>Pantalla completa</span></button>
     </div>
     <h1 data-t="Inercia">Inercia</h1>
-    <p class="lede">Salí disparado del cañón y encadená lanzamientos: cada enemigo o bloque que rompés te da un lanzamiento gratis. Curvá tu trayectoria con la gravedad de los planetas y rompé todos los núcleos. Si te frenás fuera de una zona segura, te enfriás.</p>
+    <p class="lede">Salí disparado del cañón y encadená lanzamientos: cada orbe o enemigo que rompés te da un lanzamiento gratis. Los orbes aparecen en cúmulos: seguí el camino. Curvá tu trayectoria con la gravedad de los planetas y rompé todos los núcleos. Si te frenás fuera de una zona segura, te enfriás.</p>
     <h2>Build · elegí 3 cartas <b id="cnt">0/3</b></h2>
     <div id="cards" class="grid"></div>
     <h2>Pasiva · opcional <b id="pcnt"></b></h2>
@@ -113,6 +113,8 @@ kbd{font:600 11px/1.6 "IBM Plex Mono",monospace;background:var(--bone);color:var
       <button id="swap" class="tog"></button>
       <button id="ca" class="tog"></button>
       <button id="retro" class="tog"></button>
+      <button id="mus" class="tog"></button>
+      <button id="snd" class="tog"></button>
     </div>
     <div class="help">
       <div><b>Teléfono</b><ul>
@@ -128,7 +130,8 @@ kbd{font:600 11px/1.6 "IBM Plex Mono",monospace;background:var(--bone);color:var
       </ul></div>
       <div><b>Reglas</b><ul>
         <li>≥ 650 px/s matás (anillo blanco); tanques y mini-jefes piden ≥ 1000</li>
-        <li>Cada kill, núcleo o bloque roto te da una cadena (◆): tu próximo lanzamiento es gratis y el hover no gasta</li>
+        <li>Cada orbe, kill o núcleo te da una cadena (◆): tu próximo lanzamiento es gratis y el hover no gasta</li>
+        <li>Los orbes casi no te frenan a toda velocidad; si vas lento te frenan más y te desvían</li>
         <li>Los planetas te atraen dentro de su anillo: curvá la trayectoria o posate para relanzarte</li>
         <li>Planetas y baldosas teal son zonas seguras: ahí no te enfriás (las baldosas recargan barra)</li>
         <li>Sin cadena, lanzarte y el hover gastan barra; ir lento fuera de zona segura te enfría</li>
@@ -153,15 +156,23 @@ kbd{font:600 11px/1.6 "IBM Plex Mono",monospace;background:var(--bone);color:var
 // ---------- perillas de calibración (D-03 / D-04) ----------
 const CFG = {
   gravity: 1500, tile: 40,
-  launchMax: 1700,    // px/s con arrastre completo
+  launchMax: 1300,    // px/s con arrastre completo (alcance a 45° sin estilo ≈ 1130 px)
   maxDrag: 130,       // px de pantalla para potencia completa
   keepMomentum: 0.5,  // fracción de la velocidad previa que conserva un lanzamiento (0 = D-03 estricto)
   bar: 100,           // barra de movimiento: el recurso de lanzamientos y hover
   launchBase: 12, launchPow: 28, // costo de un lanzamiento = base + pow × fracción de potencia
   hoverCost: 15,      // barra/s al apuntar en el aire; sube hasta el doble al llegar a hoverMax
   hoverMax: 2,        // s máximos de hover; la gravedad vuelve de 0 a 1 en ese lapso
-  orbRefill: 30,      // barra que da un orbe
-  chainMax: 3,        // cadenas acumulables: cada kill, núcleo o bloque roto da un lanzamiento gratis
+  orbRefill: 8,       // barra que da un orbe (poca: el orbe paga en cadena)
+  chainMax: 3,        // cadenas acumulables: cada orbe, kill o núcleo da un lanzamiento gratis
+  // orbes: el eslabón del movimiento (H-12). Frenan al tocarlos: poco a toda velocidad, mucho y desviándote si vas lento (H-10)
+  orbDrag: {fast: 1600, slow: 400, min: .05, max: .35},
+  // cúmulos de orbes por chunk: a veces ninguno; cada cúmulo con 1–6 orbes dispersos (σ en baldosas) que pueden quedar pegados
+  orbs: {empty: .25, clusters: [1, 3], size: [1, 6], spread: [1, 4]},
+  // mapa en chunks (ancho × alto): crece por nivel hasta el tope (H-11)
+  map: {w: 16, h: 8, dw: 2, dh: 1, maxW: 24, maxH: 12},
+  planetGap: 2250,    // separación mínima entre superficies de planetas: 2 lanzamientos a tope
+  coreGap: 1500,      // separación mínima entre núcleos
   padRefill: 25, padCap: .6, // baldosa segura: recarga barra/s hasta esa fracción de la barra
   coldSpeed: 400, coldTime: 2.5, coldRefill: 35, // move or die: por debajo de coldSpeed te enfriás (fuera de zona segura); lleno = −1 vida y algo de barra
   styleDecay: 14,     // estilo/s; 100 de estilo por rango (D C B A S)
@@ -181,39 +192,39 @@ const C = {ink:'#0f0e13', night:'#141219', far:'#100e14', bg:'#1a1620', win:'#2e
 
 // ---------- chunks: 16×16, se arman en una grilla 2D cerrada por un borde sólido ----------
 // En el aire no hay superficies sólidas: solo planetas. Lo sólido vive en las 3 filas de abajo de START y GROUND (la fila inferior del mapa).
-// # sólido · = baldosa segura · B goma · ^ pinchos · P planeta grande · p planeta chico (centro) · x bloque rompible
+// # sólido · = baldosa segura · B goma · ^ pinchos · P planeta grande · p planeta chico (centro; solo sobreviven los que respetan planetGap)
 // ? enemigo al azar · W caminante · F volador · S torreta · T tanque (W/S/T en el aire se pegan al planeta más cercano o pasan a volador)
-// o orbe · * orbe que puede traer power-up · N lugar posible de núcleo · @ cañón de inicio
+// * orbe que puede traer power-up · N lugar posible de núcleo · @ cañón de inicio. Los orbes comunes no se escriben: se reparten en cúmulos (CFG.orbs)
 const START = [
-  '................', '................', '.......o........', '................', '..........P.....', '................', '....x...........', '....x...........',
-  '....x...........', '................', '..o.............', '................', '................', '................', '.@..............', '=====.......###.'];
+  '................', '................', '................', '................', '..........P.....', '................', '................', '................',
+  '................', '................', '................', '................', '................', '................', '.@..............', '=====.......###.'];
 const MID = [
-  ['................', '.....o..........', '..........x.....', '..p.......x..N..', '..........x.....', '................', '.....?..........', '................',
-   '.........P......', '................', '..o.............', '..xxx...........', '................', '.............o..', '....F...........', '................'],
-  ['................', '.......N........', '................', '...p........p...', '................', '.......xx.......', '......x..x......', '......x..x......',
-   '.......xx.......', '................', '..?..........?..', '................', '.....o....o.....', '................', '.......F........', '................'],
-  ['................', '...o........o...', '................', '................', '.x............x.', '.x............x.', '.x.....P......x.', '.x............x.',
-   '.x...?....?...x.', '................', '................', '.....*....N.....', '................', '..p.............', '................', '................'],
-  ['...F........F...', '................', '.......o........', '................', '....p...........', '................', '..........xxx...', '................',
-   '.o.....N........', '................', '...xxx..........', '...........P....', '................', '................', '.....?..........', '................'],
-  ['................', '............o...', '..o.............', '....P...........', '................', '................', '..........x.....', '.........x.x....',
-   '..........x.....', '................', '..N.............', '................', '.........p......', '...?............', '............o...', '................'],
-  ['................', '..x.............', '...x.......N....', '....x...........', '.....x..........', '................', '................', '...F.......o....',
-   '................', '........P.......', '................', '................', '..o.............', '.............?..', '................', '................'],
-  ['................', '.......o........', '..p.............', '................', '.........?......', '............p...', '................', '....xx..........',
-   '....xx....N.....', '................', '..........*.....', '................', '.....p..........', '................', '..F..........o..', '................'],
-  ['................', '.....o....o.....', '................', '.......N........', '................', '....x......x....', '................', '.......P........',
-   '................', '....x......x....', '................', '..?.........?...', '................', '.....o....o.....', '................', '.......F........'],
+  ['................', '................', '................', '..p..........N..', '................', '................', '.....?..........', '................',
+   '.........P......', '................', '................', '................', '................', '................', '....F...........', '................'],
+  ['................', '.......N........', '................', '...p........p...', '................', '................', '................', '................',
+   '................', '................', '..?..........?..', '................', '................', '................', '.......F........', '................'],
+  ['................', '................', '................', '................', '................', '................', '.......P........', '................',
+   '.....?....?.....', '................', '................', '.....*....N.....', '................', '..p.............', '................', '................'],
+  ['...F........F...', '................', '................', '................', '....p...........', '................', '................', '................',
+   '.......N........', '................', '................', '...........P....', '................', '................', '.....?..........', '................'],
+  ['................', '................', '................', '....P...........', '................', '................', '................', '................',
+   '................', '................', '..N.............', '................', '.........p......', '...?............', '................', '................'],
+  ['................', '................', '...........N....', '................', '................', '................', '................', '...F............',
+   '................', '........P.......', '................', '................', '................', '.............?..', '................', '................'],
+  ['................', '................', '..p.............', '................', '.........?......', '............p...', '................', '................',
+   '..........N.....', '................', '..........*.....', '................', '.....p..........', '................', '..F.............', '................'],
+  ['................', '................', '................', '.......N........', '................', '................', '................', '.......P........',
+   '................', '................', '................', '..?.........?...', '................', '................', '................', '.......F........'],
 ];
 const GROUND = [
-  ['................', '.....o.....N....', '................', '..........p.....', '................', '...x............', '...x............', '...x......o.....',
+  ['................', '...........N....', '................', '..........p.....', '................', '................', '................', '................',
    '................', '................', '.....P..........', '................', '................', '................', '..........W.....', '...====...####..'],
-  ['................', '...o........o...', '................', '......N.........', '................', '..p.........p...', '................', '.......xx.......',
-   '................', '................', '.....o....o.....', '................', '..?.............', '..###...........', '..###.......W...', '..###..=====....'],
-  ['................', '................', '....o......o....', '................', '.......P........', '................', '................', '.x...........x..',
-   '.x.....N.....x..', '.x...........x..', '................', '................', '................', '................', '.....T..........', '===..BBBBBB..==='],
-  ['................', '.o...........o..', '................', '....p.....N.....', '................', '................', '...........P....', '................',
-   '..xx............', '................', '................', '.....*..........', '................', '................', '..W.............', '=====..^^..====='],
+  ['................', '................', '................', '......N.........', '................', '..p.........p...', '................', '................',
+   '................', '................', '................', '................', '..?.............', '..###...........', '..###.......W...', '..###..=====....'],
+  ['................', '................', '................', '................', '.......P........', '................', '................', '................',
+   '.......N........', '................', '................', '................', '................', '................', '.....T..........', '===..BBBBBB..==='],
+  ['................', '................', '................', '....p.....N.....', '................', '................', '...........P....', '................',
+   '................', '................', '................', '.....*..........', '................', '................', '..W.............', '=====..^^..====='],
 ];
 for (const c of [START, ...MID, ...GROUND]) {
   const air = MID.includes(c);
@@ -228,36 +239,54 @@ const rand = () => Math.floor(Math.random() * 1e6);
 
 // ponytail: sin validador de alcanzabilidad; los chunks se diseñan pasables y el slingshot cubre huecos. Agregarlo con la sim determinista (F3).
 function genLevel(seed, lvl) {
-  const r = mulberry32(seed), pick = a => a[Math.floor(r() * a.length)];
-  const [gw, gh] = [[3, 2], [3, 3], [4, 3]][lvl - 1] || [4, 4];
+  const r = mulberry32(seed), pick = a => a[Math.floor(r() * a.length)], between = ([a, b]) => a + Math.floor(r() * (b - a + 1));
+  const shuffle = a => { for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(r() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
+  const M0 = CFG.map, gw = Math.min(M0.maxW, M0.w + M0.dw * (lvl - 1)), gh = Math.min(M0.maxH, M0.h + M0.dh * (lvl - 1));
   const W = gw * CH + 2, Hm = gh * CH + 2, sx = Math.floor(r() * gw);
   const grid = Array.from({length: Hm}, (_, y) => Array.from({length: W}, (_, x) => x % (W - 1) && y % (Hm - 1) ? '.' : '#'));
   for (let cy = 0; cy < gh; cy++) for (let cx = 0; cx < gw; cx++) {
     const c = cy < gh - 1 ? pick(MID) : cx === sx ? START : pick(GROUND);
     for (let y = 0; y < CH; y++) for (let x = 0; x < CH; x++) grid[1 + cy * CH + y][1 + cx * CH + x] = c[y][x];
   }
-  const L = {grid, W, H: Hm, enemies: [], orbs: [], cores: [], planets: [], gems: []}, spots = [], later = [];
+  const L = {grid, W, H: Hm, enemies: [], orbs: [], cores: [], planets: []}, spots = [], later = [];
   const pool = lvl >= 3 ? 'WWFFST' : lvl >= 2 ? 'WWFFS' : 'WWF';
-  // 1.ª pasada: planetas y bloques; el resto después, porque los enemigos del aire se pegan al planeta más cercano
+  // 1.ª pasada: planetas; el resto después, porque los enemigos del aire se pegan al planeta más cercano
   for (let y = 0; y < Hm; y++) for (let x = 0; x < W; x++) {
     const c = grid[y][x];
     if ('.#=B^'.includes(c)) continue;
     grid[y][x] = '.';
     const cx = x * T + T / 2, by = (y + 1) * T;
     if (c === 'P' || c === 'p') L.planets.push(planet(cx, by - T / 2, c === 'P', r));
-    else if (c === 'x') L.gems.push({x: cx, y: by - T / 2});
     else later.push([c, cx, by, x, y]);
   }
-  // red de seguridad: sin planetas encimados ni metidos en el suelo
-  L.planets = L.planets.filter((p, i, a) => !a.slice(0, i).some(q => Math.hypot(p.x - q.x, p.y - q.y) < p.r + q.r + 40) && !touchesSolid(grid, p));
+  // los planetas de los chunks son candidatos: en orden aleatorio, sobrevive el que queda a planetGap de los ya elegidos y no toca el suelo
+  L.planets = shuffle(L.planets).reduce((ok, p) => (!touchesSolid(grid, p) && ok.every(q => Math.hypot(p.x - q.x, p.y - q.y) - p.r - q.r >= CFG.planetGap) ? [...ok, p] : ok), []);
   const near = (x, y) => L.planets.reduce((b, p) => { const d = Math.hypot(p.x - x, p.y - y) - p.r; return d < 280 && (!b || d < b.d) ? {p, d} : b; }, null)?.p;
   for (let [c, cx, by, tx, ty] of later) {
     if (c === '?') { if (r() > Math.min(.95, .45 + lvl * .1)) continue; c = pick(pool); }
     if (c === '@') L.start = {x: cx, y: by};
     else if (c === 'N') spots.push({x: cx, y: by - T / 2});
-    else if (c === 'o' || c === '*') L.orbs.push({x: cx, y: by - T / 2, pu: c === '*' && r() < .35 ? pick(['turbo', 'inf', 'shield']) : null});
+    else if (c === '*') L.orbs.push({x: cx, y: by - T / 2, pu: r() < .35 ? pick(['turbo', 'inf', 'shield']) : null});
     else if (c === 'F' || solid(grid[ty + 1][tx])) L.enemies.push(enemy(c, cx, by));
     else { const p = near(cx, by); L.enemies.push(p ? onPlanet(enemy(c === 'T' && !p.big ? 'W' : c, 0, 0), p, Math.atan2(by - p.y, cx - p.x)) : enemy('F', cx, by)); }
+  }
+  // orbes en cúmulos: cada chunk tiene 0 o varios; dentro del cúmulo la dispersión es gaussiana (pueden quedar pegados o lejos)
+  const gauss = () => Math.sqrt(-2 * Math.log(1 - r())) * Math.cos(2 * Math.PI * r()), O = CFG.orbs;
+  const cells = new Map(), cell = (x, y) => Math.floor(x / 22) + ',' + Math.floor(y / 22); // grilla para no encimar orbes
+  const put = o => { const k = cell(o.x, o.y); cells.has(k) ? cells.get(k).push(o) : cells.set(k, [o]); L.orbs.push(o); };
+  const apart = (x, y) => { for (let i = -1; i <= 1; i++) for (let j = -1; j <= 1; j++) if ((cells.get(cell(x + i * 22, y + j * 22)) || []).some(o => Math.hypot(o.x - x, o.y - y) < 22)) return false; return true; };
+  const free = (x, y) => !solid(grid[Math.floor(y / T)]?.[Math.floor(x / T)] ?? '#') && !L.planets.some(p => Math.hypot(p.x - x, p.y - y) < p.r + 30)
+    && Math.hypot(x - L.start.x, y - L.start.y) > 90 && apart(x, y);
+  for (const o of L.orbs.splice(0)) put(o);
+  for (let cy = 0; cy < gh; cy++) for (let cx = 0; cx < gw; cx++) {
+    if (r() < O.empty) continue;
+    for (let k = between(O.clusters); k > 0; k--) {
+      const ox = (1 + cx * CH + 1 + r() * (CH - 2)) * T, oy = (1 + cy * CH + 1 + r() * (CH - 2)) * T, sd = (O.spread[0] + r() * (O.spread[1] - O.spread[0])) * T;
+      for (let n = between(O.size), tries = 0; n > 0 && tries < 30; tries++) {
+        const x = ox + gauss() * sd, y = oy + gauss() * sd;
+        if (free(x, y)) { put({x, y, pu: null}); n--; }
+      }
+    }
   }
   // cada planeta trae orbes en órbita y, según el nivel, un enemigo en la superficie
   for (const p of L.planets) {
@@ -268,10 +297,10 @@ function genLevel(seed, lvl) {
       L.enemies.push(c === 'F' ? enemy('F', p.x + Math.cos(a) * (p.r + 90), p.y + Math.sin(a) * (p.r + 90)) : onPlanet(enemy(c === 'T' && !p.big ? 'W' : c, 0, 0), p, a));
     }
   }
-  for (const o of [...spots, ...L.gems, ...L.orbs.filter(o => !o.pl)]) clearOf(L.planets, o, 26);
-  // núcleos: el nivel se limpia al romperlos todos
-  for (let i = spots.length - 1; i > 0; i--) { const j = Math.floor(r() * (i + 1)); [spots[i], spots[j]] = [spots[j], spots[i]]; }
-  L.cores = spots.slice(0, Math.min(6, 2 + lvl)).map(s => ({...s, r: 20, shield: false, dead: false}));
+  for (const o of [...spots, ...L.orbs.filter(o => !o.pl)]) clearOf(L.planets, o, 26);
+  // núcleos: el nivel se limpia al romperlos todos; repartidos a coreGap entre sí
+  L.cores = shuffle(spots).reduce((ok, s) => ok.length < Math.min(8, 3 + lvl) && ok.every(c => Math.hypot(c.x - s.x, c.y - s.y) >= CFG.coreGap) ? [...ok, s] : ok, [])
+    .map(s => ({...s, r: 20, shield: false, dead: false}));
   if (lvl >= 2) { // mini-jefe: volador élite que custodia (y escuda) un núcleo
     const c = L.cores[0], b = enemy('F', c.x, c.y - 60);
     Object.assign(b, {boss: true, core: c, r: 24, hp: 3}); c.shield = true;
@@ -447,7 +476,7 @@ function playerRock(p, pl, nx, ny) {
   if (P.pound) { P.pound = false; shock(p.x, p.y, 80 + s * .08); }
   else if (s > 320) {
     const rest = CFG.rockBounce * (P.ricochet > 0 ? 1.3 : 1);
-    p.vx -= (1 + rest) * vn * nx; p.vy -= (1 + rest) * vn * ny;
+    p.vx -= (1 + rest) * vn * nx; p.vy -= (1 + rest) * vn * ny; sfx('bounce', s);
     if (s > 900) { addStyle(6); splat(p.x - nx * p.r, p.y - ny * p.r, 6 + s / 120, C.yellow); }
     if (P.ricochet > 0) { P.ricochet = 0; fx('ring', {x: p.x, y: p.y, r: 40, c: C.yellow}); }
     return;
@@ -460,7 +489,7 @@ function playerHit(p, c, ax) {
   const v = ax ? p.vx : p.vy, s = Math.abs(v), bounce = () => { if (P.ricochet > 0) { P.ricochet = 0; fx('ring', {x: p.x, y: p.y, r: 40, c: C.yellow}); } };
   if (!ax && v > 0) { // suelo
     if (P.pound) { P.pound = false; shock(p.x, p.y, 80 + v * .08); }
-    if (c === 'B' && s > 300) { p.vy = -v * rest; bounce(); return; }
+    if (c === 'B' && s > 300) { p.vy = -v * rest; bounce(); sfx('bounce', s); return; }
     if (s > 900) splat(p.x, p.y + p.r, 6 + s / 150, C.yellow);
     p.vy = 0; p.grounded = true;
     if (c === '=') P.safe = true;
@@ -468,7 +497,7 @@ function playerHit(p, c, ax) {
     if (s > 900) addStyle(6);
     if (s > 500) splat(p.x + (ax ? Math.sign(v) * p.r : 0), p.y + (ax ? 0 : Math.sign(v) * p.r), 6 + s / 120, C.yellow);
     if (ax) p.vx = -v * rest; else p.vy = -v * rest;
-    bounce();
+    bounce(); sfx('bounce', s);
   } else if (ax) p.vx = 0; else p.vy = 0;
 }
 const walkHit = (e, c, ax) => { if (ax) { e.vx = 0; e.dir *= -1; } else { if (e.vy > 0) e.grounded = true; e.vy = 0; } };
@@ -495,6 +524,7 @@ function launchVec(dx, dy) {
 function launch(dx, dy) {
   const v = launchVec(dx, dy);
   if (!v) return;
+  sfx(G.cannon ? 'cannon' : 'launch', Math.hypot(v.vx, v.vy) / CFG.launchMax);
   P.bar -= v.cost; if (v.chain) P.chain--; G.cannon = false;
   P.vx = v.vx; P.vy = v.vy; P.pound = false; endHover();
 }
@@ -505,10 +535,10 @@ function gainChain(stop) {
 }
 function jump() {
   if (G.cannon) return;
-  if (P.grounded && P.rock) { const n = norm(P.x - P.rock.x, P.y - P.rock.y); P.vx += n.x * CFG.jump; P.vy += n.y * CFG.jump; return; }
-  if (P.grounded) { P.vy = -CFG.jump; return; }
+  if (P.grounded && P.rock) { const n = norm(P.x - P.rock.x, P.y - P.rock.y); P.vx += n.x * CFG.jump; P.vy += n.y * CFG.jump; sfx('jump'); return; }
+  if (P.grounded) { P.vy = -CFG.jump; sfx('jump'); return; }
   const ty = Math.floor(P.y / T), side = solid(tileAt(Math.floor((P.x + P.r + 3) / T), ty)) ? 1 : solid(tileAt(Math.floor((P.x - P.r - 3) / T), ty)) ? -1 : 0;
-  if (side) { P.vx = -side * 520; P.vy = -CFG.jump; endHover(); }
+  if (side) { P.vx = -side * 520; P.vy = -CFG.jump; endHover(); sfx('jump'); }
 }
 function startAim() {
   if (G.cannon || P.grounded || P.hovering || !(P.bar >= 4 || P.pu.inf > 0 || P.chain > 0)) return;
@@ -528,13 +558,14 @@ function castCard(i, dir) {
   if (d.aim && !dir) dir = defaultAim();
   if (d.cast(dir?.x, dir?.y) === false) return;
   addStyle(i !== lastCard ? 12 : 4); // variar cartas da más estilo
+  sfx('card');
   c.cd = d.cd; lastCard = i;
 }
 // golpe letal: los mini-jefes aguantan varios
 function strike(e) {
   if (e.dead || e.iframe > 0) return false;
   if (e.hp > 1) {
-    e.hp--; e.iframe = .5; e.stun = .6; G.shake = .15; G.ab = 3; addStyle(25);
+    e.hp--; e.iframe = .5; e.stun = .6; G.shake = .15; G.ab = 3; addStyle(25); sfx('hit');
     fx('ring', {x: e.x, y: e.y, r: e.r + 20, c: C.paper});
     return true;
   }
@@ -542,33 +573,44 @@ function strike(e) {
 }
 function kill(e) {
   if (e.dead) return;
-  e.dead = true; G.kills++; G.combo++; G.comboT = 2.5; score += 100 * G.combo * (e.boss ? 5 : 1);
+  e.dead = true; G.kills++; G.combo++; sfx('kill'); G.comboT = 2.5; score += 100 * G.combo * (e.boss ? 5 : 1);
   addStyle(40 + (P.grounded ? 0 : 20) + Math.min(5, G.combo) * 8 + (e.boss ? 150 : 0));
   addBar(barMax() * CFG.rankRefill[rank()] * M.killRefill); gainChain(.06);
   if (e.core) { e.core.shield = false; fx('ring', {x: e.core.x, y: e.core.y, r: 60, c: C.blue}); }
   G.shake = Math.max(G.shake, .12); G.ab = Math.max(G.ab, 2.5);
   for (let i = 0; i < 6; i++) splat(e.x + (Math.random() - .5) * e.r * 3, e.y + (Math.random() - .5) * e.r * 3, 4 + Math.random() * e.r * .7, i % 2 ? C.red : C.yellow);
 }
-// bloque rompible: no frena, da cadena
-function smash(b) {
-  b.dead = true; score += 25; addStyle(12); addBar(4); gainChain(.03);
-  fx('ring', {x: b.x, y: b.y, r: 26, c: C.paper});
-  for (let i = 0; i < 3; i++) splat(b.x + (Math.random() - .5) * 36, b.y + (Math.random() - .5) * 36, 3 + Math.random() * 6, i % 2 ? C.teal : C.paper);
+// orbe: el enemigo de menor nivel. Da cadena y un poco de barra, suma al combo y frena: casi nada a toda velocidad,
+// mucho si vas lento, y entonces también te desvía como un rebote blando (H-10, H-12)
+let orbN = 0, orbT = -9;
+function takeOrb(o, sp) {
+  o.got = true; addBar(CFG.orbRefill * M.orbRefill); addStyle(10); gainChain(.02);
+  G.combo++; G.comboT = 2.5; score += 10 * G.combo;
+  if (M.orbHeal) P.hp = Math.min(3, P.hp + M.orbHeal);
+  if (o.pu) P.pu[o.pu] = {turbo: 8, inf: 5, shield: 6}[o.pu];
+  // lentitud 0 (≥ fast) … 1 (≤ slow); el desvío pesa lentitud³ para que solo se note de verdad yendo lento
+  const D = CFG.orbDrag, slow = 1 - Math.max(0, Math.min(1, (sp - D.slow) / (D.fast - D.slow)));
+  const n = norm(P.x - o.x, P.y - o.y), vn = P.vx * n.x + P.vy * n.y;
+  if (vn < 0) { P.vx -= 1.4 * vn * n.x * slow ** 3; P.vy -= 1.4 * vn * n.y * slow ** 3; }
+  const k = 1 - (D.min + (D.max - D.min) * slow ** 2);
+  P.vx *= k; P.vy *= k;
+  orbN = G.time - orbT < .8 ? orbN + 1 : 0; orbT = G.time; sfx('orb', orbN);
+  fx('ring', {x: o.x, y: o.y, r: 26, c: o.pu ? C.yellow : C.teal});
+  splat(o.x, o.y, 4 + Math.random() * 4, C.teal);
 }
 function shock(x, y, r) {
   for (const e of G.enemies) if (Math.hypot(e.x - x, e.y - y) < r + e.r) strike(e);
-  for (const b of G.gems) if (!b.dead && Math.hypot(b.x - x, b.y - y) < r + 14) smash(b);
-  fx('ring', {x, y, r, c: C.yellow}); G.shake = .25; G.ab = 3.5;
+  fx('ring', {x, y, r, c: C.yellow}); G.shake = .25; G.ab = 3.5; sfx('shock');
   for (let i = 0; i < 8; i++) splat(x + (Math.random() - .5) * r * 1.4, y + (Math.random() - .5) * 10, 5 + Math.random() * 9, C.yellow);
 }
 function parryOk() {
-  P.parry = 0; P.inv = .5; addBar(barMax()); addStyle(100);
+  P.parry = 0; P.inv = .5; addBar(barMax()); addStyle(100); sfx('parry');
   for (const c of hand) c.cd = 0;
   fx('ring', {x: P.x, y: P.y, r: 60, c: C.paper});
 }
 function hurt(sx, sy, force) {
   if (!force && (P.inv > 0 || P.pu.shield > 0)) return;
-  P.hp--; P.inv = 1.2; G.combo = 0; addStyle(-120); G.shake = .3; G.ab = 6; G.glitch = .4;
+  P.hp--; P.inv = 1.2; G.combo = 0; sfx('hurt'); addStyle(-120); G.shake = .3; G.ab = 6; G.glitch = .4;
   const n = norm(P.x - sx, P.y - sy); // empujón lejos del golpe (en un planeta, hacia afuera)
   P.vx = n.x * 560; P.vy = n.y * 560 - (P.rock ? 0 : 260); endHover();
   if (P.hp <= 0) gameOver();
@@ -674,22 +716,16 @@ function update(dt) {
   G.shots = G.shots.filter(s => s.t > 0);
   if (hid) return;
 
-  // orbes: recargan barra y se rompen al tocarlos; algunos orbitan planetas
+  // orbes: se rompen al tocarlos (takeOrb); algunos orbitan planetas
   for (const o of G.orbs) {
     if (o.pl) { o.a += o.w * dt; o.x = o.pl.x + Math.cos(o.a) * o.d; o.y = o.pl.y + Math.sin(o.a) * o.d; }
-    if (o.got || Math.hypot(o.x - P.x, o.y - P.y) >= P.r + 14) continue;
-    o.got = true; addBar(CFG.orbRefill * M.orbRefill); addStyle(10);
-    if (M.orbHeal) P.hp = Math.min(3, P.hp + M.orbHeal);
-    if (o.pu) P.pu[o.pu] = {turbo: 8, inf: 5, shield: 6}[o.pu];
-    fx('ring', {x: o.x, y: o.y, r: 26, c: o.pu ? C.yellow : C.teal});
+    if (!o.got && Math.hypot(o.x - P.x, o.y - P.y) < P.r + 11) takeOrb(o, Math.hypot(P.vx, P.vy));
   }
-  // bloques rompibles: se atraviesan y dan cadena
-  for (const b of G.gems) if (!b.dead && Math.abs(b.x - P.x) < P.r + 14 && Math.abs(b.y - P.y) < P.r + 14) smash(b);
-  G.gems = G.gems.filter(b => !b.dead);
+  G.orbs = G.orbs.filter(o => !o.got);
   // núcleos: se rompen chocándolos rápido; lento, rebotás
   for (const c of G.cores) if (!c.dead && Math.hypot(c.x - P.x, c.y - P.y) < P.r + c.r) {
     if (!c.shield && (sp >= CFG.killSpeed || P.parry > 0 || P.pu.shield > 0)) {
-      c.dead = true; score += 500; addStyle(80); addBar(barMax()); gainChain(.08); G.shake = .3; G.ab = 5;
+      c.dead = true; score += 500; sfx('core'); addStyle(80); addBar(barMax()); gainChain(.08); G.shake = .3; G.ab = 5;
       fx('ring', {x: c.x, y: c.y, r: 90, c: C.yellow});
       for (let i = 0; i < 10; i++) splat(c.x + (Math.random() - .5) * 90, c.y + (Math.random() - .5) * 90, 5 + Math.random() * 12, i % 2 ? C.yellow : C.paper);
     } else {
@@ -944,16 +980,8 @@ function render(rdt) {
     if (c.shield) { ctx.strokeStyle = C.blue; ctx.lineWidth = 5; ctx.setLineDash([10, 7.5]); ctx.lineDashOffset = G.time * 30; circle(c.x, c.y, c.r + 16); ctx.stroke(); ctx.setLineDash([]); }
   }
 
-  // bloques rompibles: baldosas de papel que se atraviesan y dan cadena
-  for (const b of G.gems) if (seen(b.x, b.y, 20)) {
-    const s = 13;
-    ctx.fillStyle = C.teal; ctx.fillRect(b.x - s + 3, b.y - s + 3, s * 2, s * 2);
-    ctx.fillStyle = C.red; ctx.fillRect(b.x - s - 3, b.y - s, s * 2, s * 2);
-    ctx.fillStyle = C.paper; ctx.fillRect(b.x - s, b.y - s, s * 2, s * 2);
-    ctx.fillStyle = C.ink; ctx.fillRect(b.x - 4, b.y - 4, 8, 8);
-  }
-  // orbes: teal = barra; los especiales traen power-up
-  for (const o of G.orbs) if (!o.got) {
+  // orbes: teal = cadena; los especiales traen power-up
+  for (const o of G.orbs) if (seen(o.x, o.y, 20)) {
     const yy = o.pl ? o.y : o.y + Math.sin(G.time * 3 + o.x) * 4;
     if (o.pu) {
       const col = {turbo: C.teal, inf: C.yellow, shield: C.blue}[o.pu];
@@ -1144,7 +1172,7 @@ function hud(sp) {
     ctx.font = JF(22); ink('EN EL CAÑÓN NADIE TE VE NI TE TOCA', w / 2, h * .22 + 34, C.paper, 1);
   } else if (level === 1 && G.time < 8) {
     ctx.globalAlpha = Math.min(1, 8 - G.time); ctx.textAlign = 'center';
-    const chain = 'ROMPÉ ENEMIGOS Y BLOQUES: CADA UNO ES UN LANZAMIENTO GRATIS ◆ · LOS PLANETAS TE ATRAEN';
+    const chain = 'CADA ORBE O ENEMIGO QUE ROMPÉS ES UN LANZAMIENTO GRATIS ◆ · LOS PLANETAS TE ATRAEN';
     fit([chain], w * .9, 24); ink(chain, w / 2, h * .3, C.yellow, 1);
     const sling = 'ARRASTRÁ Y SOLTÁ: LANZARTE · TOQUE: SALTO', card = `CARTAS ${CFG.swap ? '↙' : '↘'} · DOBLE TOQUE: REPETIR ÚLTIMA`;
     const desk = 'ARRASTRÁ EL MOUSE: LANZARTE · CLIC/ESPACIO: SALTO · 1-3: CARTAS AL CURSOR · Q/CLIC DER.: REPETIR';
@@ -1196,6 +1224,7 @@ function frame(now) {
     G.time += rdt; P.x += 110 * rdt; P.y = G.H * T * .5 + Math.sin(G.time * .3) * G.H * T * .3;
     if (P.x > G.W * T) cam.x = P.x = 0;
   }
+  audioTick();
   render(rdt);
   requestAnimationFrame(frame);
 }
@@ -1239,6 +1268,74 @@ if (matchMedia('(display-mode: fullscreen), (display-mode: standalone)').matches
 let toastT = 0;
 function toast(s) { const t = $('#toast'); t.textContent = s; t.hidden = false; clearTimeout(toastT); toastT = setTimeout(() => t.hidden = true, 4500); }
 
+// ---------- audio: música de fondo y efectos sintetizados ----------
+// la música (musica.mp3) pasa por un pasabajos: cerrado en el menú y el cañón, abierto al jugar; el tiempo bala la estira como cinta.
+// Abierto como archivo (file://) el navegador no deja rutear el <audio> por WebAudio: ahí suena directo, sin filtro.
+const AU = {music: true, sfx: true, ...load('inercia.audio', {})};
+const song = new Audio('musica.mp3');
+song.loop = true; song.preload = 'auto'; song.preservesPitch = song.mozPreservesPitch = song.webkitPreservesPitch = false;
+let ac = null, sfxOut = null, lp = null, noiseBuf = null, lpT = 0;
+function audioInit() {
+  if (!ac) {
+    const A = window.AudioContext || window.webkitAudioContext;
+    if (!A) return;
+    ac = new A();
+    const out = ac.createDynamicsCompressor(); out.connect(ac.destination);
+    sfxOut = ac.createGain(); sfxOut.gain.value = .5; sfxOut.connect(out);
+    noiseBuf = ac.createBuffer(1, ac.sampleRate, ac.sampleRate);
+    const d = noiseBuf.getChannelData(0); for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+    if (location.protocol !== 'file:') {
+      lp = ac.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 700;
+      const g = ac.createGain(); g.gain.value = .6;
+      ac.createMediaElementSource(song).connect(lp); lp.connect(g); g.connect(out);
+    }
+  }
+  if (ac.state === 'suspended') ac.resume();
+  if (AU.music) song.play().catch(() => {}); else song.pause();
+}
+for (const ev of ['pointerdown', 'keydown']) addEventListener(ev, audioInit, {capture: true});
+// cada cuadro: filtro según la escena y cinta lenta con tiempo bala (solo se programa al cambiar)
+function audioTick() {
+  if (!ac) return;
+  const play = state === 'play' && !G.cannon, f = play ? (P.inv > 0 ? 1800 : 18000) : state === 'play' ? 2400 : 700;
+  if (lp && f !== lpT) { lpT = f; lp.frequency.setTargetAtTime(f, ac.currentTime, .12); }
+  if (!lp) song.volume = play ? .7 : .35;
+  const rate = state === 'play' && G.slow > 0 ? .8 : 1;
+  if (song.playbackRate !== rate) song.playbackRate = rate;
+}
+function tone(type, f0, f1, dur, vol, when = 0) {
+  const t = ac.currentTime + when, o = ac.createOscillator(), g = ac.createGain();
+  o.type = type; o.frequency.setValueAtTime(f0, t); o.frequency.exponentialRampToValueAtTime(f1, t + dur);
+  g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(.001, t + dur);
+  o.connect(g); g.connect(sfxOut); o.start(t); o.stop(t + dur + .02);
+}
+function noise(dur, f0, f1, vol, q = 1, when = 0) {
+  const t = ac.currentTime + when, s = ac.createBufferSource(), bp = ac.createBiquadFilter(), g = ac.createGain();
+  s.buffer = noiseBuf; bp.type = 'bandpass'; bp.Q.value = q;
+  bp.frequency.setValueAtTime(f0, t); bp.frequency.exponentialRampToValueAtTime(f1, t + dur);
+  g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(.001, t + dur);
+  s.connect(bp); bp.connect(g); g.connect(sfxOut); s.start(t, Math.random() * .5); s.stop(t + dur + .02);
+}
+const SFX = {
+  launch: p => { noise(.22, 300 + p * 1200, 2500 + p * 3500, .2 + p * .25, 1.5); tone('triangle', 150, 80, .12, .18); },
+  cannon: () => { noise(.55, 220, 50, .7, .7); tone('sine', 120, 38, .5, .7); },
+  jump: () => tone('square', 260, 520, .09, .07),
+  // cada orbe seguido sube un semitono: un cúmulo suena a escala
+  orb: n => { const f = 620 * 2 ** (Math.min(n, 14) / 12); tone('triangle', f, f * 1.5, .12, .16); tone('sine', f * 2, f * 2, .07, .05); },
+  hit: () => { noise(.12, 1800, 400, .3, 1); tone('square', 300, 150, .1, .1); },
+  kill: () => { noise(.2, 2600, 250, .45, .8); tone('square', 230, 55, .18, .16); },
+  shock: () => { noise(.4, 600, 60, .6, .6); tone('sine', 90, 35, .35, .5); },
+  core: () => { noise(.7, 1400, 70, .55, .6); tone('sawtooth', 110, 50, .6, .2); [523, 659, 784, 1047].forEach((f, i) => tone('triangle', f, f, .3, .1, .05 * i)); },
+  hurt: () => { tone('sawtooth', 150, 55, .32, .3); noise(.25, 900, 150, .3, 2); },
+  bounce: s => tone('sine', 190, 85, .09, Math.min(.3, s / 3500)),
+  card: () => { tone('square', 880, 1320, .06, .07); noise(.08, 5000, 2000, .1, 3); },
+  parry: () => [1047, 1568].forEach((f, i) => tone('triangle', f, f, .18, .14, i * .04)),
+  win: () => [523, 659, 784, 1047, 1319].forEach((f, i) => tone('square', f, f, .2, .08, i * .09)),
+  over: () => [392, 311, 262, 196].forEach((f, i) => tone('triangle', f, f * .97, .32, .14, i * .17)),
+  ui: () => tone('square', 660, 880, .05, .06),
+};
+function sfx(n, a) { if (ac && AU.sfx && ac.state === 'running') SFX[n](a); }
+
 // ---------- menú y mensajes ----------
 function drawMenu() {
   const all = Object.entries(CARDS), total = String(all.length).padStart(2, '0');
@@ -1255,6 +1352,8 @@ function drawMenu() {
   $('#swap').textContent = `Controles: ${CFG.swap ? 'movimiento a la derecha · cartas a la izquierda' : 'movimiento a la izquierda · cartas a la derecha'}`;
   $('#ca').textContent = `Aberración cromática: ${FX.ca ? 'sí' : 'no'}`;
   $('#retro').textContent = `Filtro retro (scanlines, grano): ${FX.retro ? 'sí' : 'no'}`;
+  $('#mus').textContent = `Música: ${AU.music ? 'sí' : 'no'}`;
+  $('#snd').textContent = `Efectos de sonido: ${AU.sfx ? 'sí' : 'no'}`;
 }
 $('#cards').onclick = e => {
   const b = e.target.closest('button');
@@ -1273,10 +1372,12 @@ $('#inv').onclick = () => { CFG.inverted = !CFG.inverted; save('inercia.inv', CF
 $('#swap').onclick = () => { CFG.swap = !CFG.swap; save('inercia.swap', CFG.swap); drawMenu(); };
 $('#ca').onclick = () => { FX.ca = !FX.ca; save('inercia.fx', FX); drawMenu(); };
 $('#retro').onclick = () => { FX.retro = !FX.retro; save('inercia.fx', FX); drawMenu(); };
+$('#mus').onclick = () => { AU.music = !AU.music; save('inercia.audio', AU); audioInit(); drawMenu(); };
+$('#snd').onclick = () => { AU.sfx = !AU.sfx; save('inercia.audio', AU); drawMenu(); sfx('ui'); };
 $('#play').onclick = () => {
   level = 1; score = 0; seed = parseInt($('#seed').value) || rand();
   if (COARSE) fullscreen(true, true);
-  startLevel();
+  sfx('ui'); startLevel();
 };
 $('#pause').onclick = () => showMenu();
 function showMenu() { state = 'menu'; drawMenu(); $('#msg').hidden = $('#hb').hidden = true; $('#menu').hidden = false; }
@@ -1288,16 +1389,18 @@ function showMsg(title, body, [l1, f1], [l2, f2]) {
   $('#msg').hidden = false;
 }
 function win() {
+  sfx('win');
   score += Math.max(0, Math.round(2000 - G.time * 15));
   showMsg(`Nivel ${level} limpio`, `${fmt(G.time)} · ${G.kills} kills · ${score} pts · semilla ${seed}`,
     ['Siguiente nivel', () => { level++; seed = rand(); startLevel(); }], ['Cambiar build', showMenu]);
 }
 function gameOver() {
+  sfx('over');
   showMsg('Te borraron', `Nivel ${level} · ${score} pts · semilla ${seed}`,
     ['Reintentar este mapa', () => { score = 0; startLevel(); }], ['Cambiar build', showMenu]);
 }
 
-$('#tick').textContent = ' ≥ 650 PX/S BORRA ✦ CADA KILL ES UN LANZAMIENTO GRATIS ✦ LOS PLANETAS TE ATRAEN ✦ ROMPÉ LOS NÚCLEOS ✦ EN EL CAÑÓN NADIE TE VE ✦ MOVETE O MORÍ ✦'.repeat(4);
+$('#tick').textContent = ' ≥ 650 PX/S BORRA ✦ CADA ORBE ES UN LANZAMIENTO GRATIS ✦ LOS PLANETAS TE ATRAEN ✦ ROMPÉ LOS NÚCLEOS ✦ EN EL CAÑÓN NADIE TE VE ✦ MOVETE O MORÍ ✦'.repeat(4);
 resize(); world(rand(), 3); G.demo = true; cam = {x: P.x, y: P.y, z: 1}; drawMenu(); fsLabel(); requestAnimationFrame(frame);
 </script>
 </body>
