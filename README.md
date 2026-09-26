@@ -7,23 +7,26 @@ También funciona abriendo `index.html` directo en el navegador (desktop o telé
 
 - **Pantalla completa**: botón en el menú y en la partida, o `F` en desktop. En Android se entra sola al tocar Jugar. En iPhone (sin Fullscreen API) hay que usar Compartir → Agregar a inicio: el manifest la abre a pantalla completa y en horizontal.
 
-- **Cañón**: cada nivel arranca con el tiempo congelado dentro de un cañón; apuntás y el primer disparo sale gratis y a potencia máxima.
-- **Slingshot**: arrastrar y soltar (mitad izquierda en el teléfono, mouse en desktop); toque o Espacio = salto / wall-jump (gratis).
+- **Cañón**: cada nivel arranca dentro de un cañón; apuntás y el primer disparo sale gratis y a potencia máxima. Mientras estás adentro sos invisible e invencible.
+- **Cadenas**: cada kill, núcleo o bloque rompible te da una cadena (hasta 3): el próximo lanzamiento es gratis y el hover no gasta barra. La idea es encadenar lanzamientos rompiendo cosas, no caminar como en un plataformero.
+- **Planetas**: en el aire no hay paredes ni plataformas, solo planetas con un campo gravitatorio (el anillo punteado) que curva tu trayectoria, las balas y los orbes que los orbitan. Llegando lento te posás y te relanzás desde ahí.
+- **Zonas seguras**: posado en un planeta o sobre una baldosa teal del suelo no te enfriás; las baldosas además recargan barra hasta el 60 %.
+- **Slingshot**: arrastrar y soltar (mitad izquierda en el teléfono, o derecha si invertís los lados en Ajustes; mouse en desktop); toque o Espacio = salto (gratis).
 - **Barra de movimiento**: lanzarte cuesta un fijo + un extra según la potencia, y la potencia queda limitada por la barra que te queda. El hover (apuntar en el aire) también gasta barra, cada vez más rápido, hasta un máximo de 2 s.
 - **Recarga**: orbes rompibles (una parte), núcleos (completa) y kills, que recargan más cuanto más alto es tu rango de estilo (D → S). El estilo sube con kills, combos, rebotes rápidos, esquivar balas de cerca y variar cartas; decae con el tiempo y con el daño. Cada rango también sube la potencia y la velocidad máxima.
-- **Move or die**: ir a menos de 400 px/s llena el medidor de frío; lleno = −1 vida.
+- **Move or die**: ir a menos de 400 px/s fuera de una zona segura llena el medidor de frío; lleno = −1 vida.
 - **Objetivo**: romper todos los núcleos chocándolos a ≥ 650 px/s. Desde el nivel 2, un mini-jefe (3 golpes) escuda uno de ellos.
-- **Cartas (D-04 / D-07)**: build de 3 de 9 cartas en el menú; fila abajo a la derecha, doble toque = repetir última. Desktop: 1-3 al cursor, Q o clic derecho.
+- **Cartas (D-04 / D-07)**: build de 3 de 9 cartas en el menú; fila abajo a la derecha (o a la izquierda con los lados invertidos), doble toque = repetir última. Desktop: 1-3 al cursor, Q o clic derecho.
 - **Pasivas**: 1 ranura opcional con un trade-off sobre la barra (Tanque grande, Tacaño, Planeador, Adrenalina, Ancla). A futuro se desbloquean con logros; por ahora están todas abiertas.
-- **Mapas**: chunks de 16×16 hechos a mano, armados en una grilla 2D por semilla (3×2 en el nivel 1 hasta 4×4).
-- **Enemigos**: caminante, volador, torreta y tanque. Se matan chocando a ≥ 650 px/s (tanque y mini-jefe ≥ 1000).
+- **Mapas**: chunks de 16×16 hechos a mano, armados en una grilla 2D por semilla (3×2 en el nivel 1 hasta 4×4). Lo sólido solo existe en el suelo; arriba hay planetas y bloques rompibles.
+- **Enemigos**: caminante, volador, torreta y tanque; caminantes, torretas y tanques también viven sobre los planetas. Se matan chocando a ≥ 650 px/s (tanque y mini-jefe ≥ 1000).
 - **Power-ups** (en algunos orbes): turbo, barra congelada y escudo.
 
 Las perillas de calibración están en `CFG`, al inicio del script.
 
 ## Look
 
-Impresión riso desregistrada sobre pantalla vieja: tintas hueso, girasol, tomate, teal y cobalto; tipografía pixel (Jersey 10) con IBM Plex Mono. El mundo se dibuja en un buffer de baja resolución (una baldosa = 16 px de arte, `ART`) y pasa por un post-proceso WebGL con aberración cromática que crece con la velocidad, los golpes y el tiempo bala, más glitch al recibir daño, dithering, scanlines y grano. Sin WebGL se dibuja el buffer escalado sin post-proceso.
+Impresión riso desregistrada: tintas hueso, girasol, tomate, teal y cobalto; tipografía Jersey 10 con IBM Plex Mono. El mundo se dibuja nítido a resolución de pantalla (sin pixel art, para que se lea bien a alta velocidad) y pasa por un post-proceso WebGL con aberración cromática que crece con la velocidad, los golpes y el tiempo bala, glitch al recibir daño y un filtro retro (scanlines, viñeta y grano). La aberración y el filtro retro se apagan en *Ajustes*. No hay desenfoque de movimiento. Sin WebGL se dibuja el buffer sin post-proceso.
 
 ## Despliegue
 
