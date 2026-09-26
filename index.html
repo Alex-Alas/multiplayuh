@@ -1,0 +1,702 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+<title>Inercia</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=Permanent+Marker&display=swap">
+<style>
+:root{--ink:#14161b;--concrete:#2c303a;--paper:#efe8d8;--yellow:#ffe14d;--pink:#ff4f9a;--muted:#8d93a1;color-scheme:dark}
+html,body{height:100%;margin:0;background:var(--ink);color:var(--paper);overflow:hidden;overscroll-behavior:none;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none;font:14px/1.5 "IBM Plex Mono",ui-monospace,monospace}
+canvas{position:fixed;inset:0;width:100%;height:100%;display:block;touch-action:none}
+.ov{position:fixed;inset:0;overflow:auto;background:rgb(20 22 27/.95);padding-block:max(20px,env(safe-area-inset-top)) 32px;padding-inline:max(16px,env(safe-area-inset-left)) max(16px,env(safe-area-inset-right))}
+.wrap{max-width:820px;margin:0 auto;display:grid;gap:16px}
+h1{font:400 clamp(44px,9vw,80px)/1 "Permanent Marker",cursive;color:var(--yellow);text-shadow:4px 3px 0 var(--pink);transform:rotate(-2deg);margin:6px 0 0;text-wrap:balance}
+h2{font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin:0;display:flex;gap:8px}
+h2 b{color:var(--yellow)}
+p{margin:0;max-width:65ch}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:8px}
+button{font:inherit;color:inherit;cursor:pointer;border-radius:6px}
+button:focus-visible{outline:2px solid var(--yellow);outline-offset:2px}
+.card{display:grid;gap:4px;text-align:left;padding:10px 12px;background:var(--concrete);border:2px solid transparent}
+.card b{font:400 18px "Permanent Marker",cursive}
+.card span{font-size:12px;color:#c9c3b5}
+.card i{font-style:normal;font-size:11px;color:var(--muted)}
+.card.on{background:var(--paper);color:var(--ink);border-color:var(--yellow);box-shadow:3px 3px 0 var(--pink)}
+.card.on span,.card.on i{color:#3b3d44}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.tog,.row button:not(.go){background:none;border:1px solid var(--muted);padding:9px 12px}
+.go{background:var(--yellow);color:var(--ink);border:0;padding:10px 26px;font:400 22px "Permanent Marker",cursive;box-shadow:3px 3px 0 var(--pink)}
+.go:disabled{opacity:.4;cursor:default}
+label{display:flex;gap:8px;align-items:center;color:var(--muted)}
+input{font:inherit;width:9ch;background:var(--concrete);color:var(--paper);border:1px solid #444a57;border-radius:6px;padding:8px}
+.help{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px 24px;font-size:12px;color:#c9c3b5}
+.help ul{margin:4px 0 0;padding-left:18px}
+.help b{color:var(--paper)}
+#pause{position:fixed;top:max(10px,env(safe-area-inset-top));right:max(10px,env(safe-area-inset-right));width:40px;height:40px;background:rgb(44 48 58/.8);border:0;font-size:18px}
+#rot{position:fixed;left:0;right:0;top:0;padding:8px 16px;background:var(--pink);color:var(--ink);text-align:center;font-size:12px;display:none;pointer-events:none}
+@media (orientation:portrait) and (pointer:coarse){#rot{display:block}}
+#safe{position:fixed;visibility:hidden;padding:0 env(safe-area-inset-right,0px) env(safe-area-inset-bottom,0px) env(safe-area-inset-left,0px)}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<button id="pause" hidden aria-label="Menú">≡</button>
+<div id="safe"></div>
+<div id="rot">Gira el teléfono: se juega en horizontal</div>
+
+<div id="menu" class="ov">
+  <div class="wrap">
+    <h1>Inercia</h1>
+    <p>Prototipo singleplayer para validar movimiento, cartas y mapas procedurales. Chocá a alta velocidad para borrar enemigos y llegá a la meta.</p>
+    <h2>Build · elegí 3 cartas <b id="cnt">0/3</b></h2>
+    <div id="cards" class="grid"></div>
+    <div class="row">
+      <button id="play" class="go">Jugar</button>
+      <button id="inv" class="tog"></button>
+      <label for="seed">Semilla <input id="seed" inputmode="numeric" placeholder="azar"></label>
+    </div>
+    <div class="help">
+      <div><b>Teléfono</b><ul>
+        <li>Mitad izquierda: arrastrá y soltá para lanzarte; toque = salto / wall-jump</li>
+        <li>Carta (abajo a la derecha): tocá y soltá, o arrastrá para apuntar</li>
+        <li>Doble toque en la mitad derecha: repite la última carta (arrastrá en el 2.º toque para apuntar)</li>
+      </ul></div>
+      <div><b>Desktop</b><ul>
+        <li>Arrastrá con el mouse para lanzarte; clic o Espacio = salto</li>
+        <li>1 · 2 · 3 = cartas hacia el cursor; Q o clic derecho = última carta</li>
+        <li>R = mapa nuevo · Esc = menú</li>
+      </ul></div>
+      <div><b>Reglas</b><ul>
+        <li>≥ 650 px/s matás (anillo blanco); tanques piden ≥ 1000</li>
+        <li>2 lanzamientos en el aire; suelo o kill recargan lanzamientos y hover</li>
+        <li>Apuntar en el aire te frena (hover); la gravedad vuelve en 1.5 s</li>
+      </ul></div>
+    </div>
+  </div>
+</div>
+
+<div id="msg" class="ov" hidden>
+  <div class="wrap">
+    <h1 id="mt"></h1>
+    <p id="mb"></p>
+    <div class="row"><button id="m1" class="go"></button><button id="m2"></button></div>
+  </div>
+</div>
+
+<script>
+'use strict';
+// ---------- perillas de calibración (D-03 / D-04) ----------
+const CFG = {
+  gravity: 1900, tile: 40,
+  launchMax: 1300,    // px/s con arrastre completo
+  maxDrag: 140,       // px de pantalla para potencia completa
+  keepMomentum: 0.5,  // fracción de la velocidad previa que conserva un lanzamiento (0 = D-03 estricto)
+  charges: 2,         // lanzamientos en el aire; suelo o kill los recargan
+  hoverFade: 1.5,     // s para que la gravedad vuelva de 0 a 1 al apuntar en el aire
+  killSpeed: 650, tankSpeed: 1000, maxSpeed: 2400,
+  jump: 720, restitution: 0.45, doubleTap: 300,
+  inverted: true,     // slingshot opuesto al arrastre (se cambia en el menú)
+};
+const T = CFG.tile, H = 16;
+const C = {ink:'#14161b', bg:'#1c1f26', concrete:'#2c303a', edge:'#555b69', paper:'#efe8d8', yellow:'#ffe14d', pink:'#ff4f9a', blue:'#3a8dff', orange:'#ff8a3d', dim:'#3a3f4b'};
+
+// ---------- chunks: 16 filas; bordes abiertos salvo el piso (filas 14-15) ----------
+// # sólido · B goma · ^ pinchos · ? enemigo al azar · W caminante · F volador · S torreta · T tanque · * power-up · @ inicio · G meta
+const ch = (...rows) => [...Array(H - rows.length).fill('.'.repeat(rows[0].length)), ...rows];
+const START = ch('..@.........', '############', '############');
+const END = ch('.........G..', '############', '############');
+const MID = [
+  ch('......*.........', '.....####.......', '................', '...?.......?....', '################', '################'),
+  ch('.......B........', '.......B........', '.......B....?...', '.......B...###..', '.......B........', '..*....B........', '.......B........', '####........####', '####........####'),
+  ch('............?...', '...........####.', '................', '........*.......', '.......####.....', '................', '...?............', '..####..........', '................', '################', '################'),
+  ch('....F.....F.....', '................', '................', '.......*........', '.....######.....', '................', '..^^^^^^^^^^^^..', '################', '################'),
+  ch('.......*........', '..BBBBBBBBBBBB..', '................', '................', '................', '....?....?......', '################', '################'),
+  ch('..........S.....', '.........####...', '................', '................', '................', '....S...........', '...####.........', '................', '................', '..........?.....', '################', '################'),
+  ch('.......*........', '................', '................', '.B............B.', '.B............B.', '.B............B.', '.B............B.', '.B............B.', '.B.....T......B.', '################', '################'),
+  ch('.....?......?...', '....###....###..', '................', '................', '................', '................', '........*.......', '.......##.......', '###..........###', '###..........###'),
+  ch('.......##.......', '.......##.......', '.......##.......', '.......##.......', '.......##.......', '.......##.....?.', '.......##.......', '.......##.......', '...?...##.......', '.......##.......', '################', '################'),
+  ch('...F......F.....', '................', '.......F........', '................', '................', '................', '................', '................', '....*...........', '...###....###...', '................', '................', '################', '################'),
+];
+for (const c of [START, END, ...MID]) console.assert(
+  c.length === H && c.every(r => r.length === c[0].length) &&
+  c.every((r, y) => y >= 14 ? r[0] === '#' && r.at(-1) === '#' : r[0] === '.' && r.at(-1) === '.'),
+  'chunk mal formado', c);
+
+function mulberry32(a) { return () => { a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+const rand = () => Math.floor(Math.random() * 1e6);
+
+// ponytail: sin validador de alcanzabilidad; los chunks se diseñan pasables y el slingshot cubre huecos. Agregarlo con la sim determinista (F3).
+function genLevel(seed, lvl) {
+  const r = mulberry32(seed), pick = a => a[Math.floor(r() * a.length)];
+  const parts = [START];
+  for (let i = 0; i < Math.min(14, 3 + lvl * 2); i++) parts.push(pick(MID));
+  parts.push(END);
+  const grid = Array.from({length: H}, (_, y) => [...parts.map(p => p[y]).join('')]);
+  const L = {grid, W: grid[0].length, enemies: [], pups: []};
+  const pool = lvl >= 3 ? 'WWFFST' : lvl >= 2 ? 'WWFFS' : 'WWF';
+  for (let y = 0; y < H; y++) for (let x = 0; x < L.W; x++) {
+    let c = grid[y][x];
+    if ('.#B^'.includes(c)) continue;
+    grid[y][x] = '.';
+    if (c === '?') { if (r() > Math.min(.95, .45 + lvl * .1)) continue; c = pick(pool); }
+    const cx = x * T + T / 2, by = (y + 1) * T;
+    if (c === '@') L.start = {x: cx, y: by};
+    else if (c === 'G') L.goal = {x: cx, y: by};
+    else if (c === '*') { if (r() < .65) L.pups.push({x: cx, y: by - T / 2, type: pick(['turbo', 'inf', 'shield'])}); }
+    else L.enemies.push(enemy(c, cx, by));
+  }
+  L.bg = Array.from({length: Math.ceil(L.W / 2)}, (_, i) => ({x: i * T - 200 + r() * 20, w: 40 + r() * 70, h: 120 + r() * 380}));
+  return L;
+}
+function enemy(type, x, by) {
+  const r = {W: 16, F: 14, S: 16, T: 26}[type];
+  return {type, x, y: by - r - .01, vx: 0, vy: 0, r, dir: 1, stun: 0, mark: 0, slow: 0, cd: 1 + Math.random(), grounded: false};
+}
+
+// ---------- cartas: definición separada de cómo se obtienen (D-07) ----------
+const CARDS = {
+  ricochet: {n: 'Ricochet', d: 'Tu próximo rebote en pared o techo sale ×1.3.', cd: 4, cast() { P.ricochet = 4; }},
+  gancho: {n: 'Gancho', d: 'Te jala hacia la superficie o el enemigo apuntado y lo aturde.', cd: 3, aim: 1, cast(ux, uy) {
+    for (let d = 20; d < 480; d += 8) {
+      const x = P.x + ux * d, y = P.y + uy * d, e = G.enemies.find(e => Math.hypot(e.x - x, e.y - y) < e.r + 6);
+      if (e || solid(tileAt(Math.floor(x / T), Math.floor(y / T)))) {
+        if (e) e.stun = 1.2;
+        fx('line', {x1: P.x, y1: P.y, x2: x, y2: y, c: C.paper});
+        endHover(); P.pound = false; P.vx = ux * 1400; P.vy = uy * 1400;
+        return;
+      }
+    }
+    return false;
+  }},
+  spray: {n: 'Spray', d: 'Cono de pintura: ralentiza y marca. Un marcado muere al tocarlo.', cd: 5, aim: 1, cast(ux, uy) {
+    for (const e of G.enemies) {
+      const dx = e.x - P.x, dy = e.y - P.y, d = Math.hypot(dx, dy);
+      if (d < 260 && (dx * ux + dy * uy) / d > .8) { e.slow = 3; e.mark = 4; }
+    }
+    const a = Math.atan2(uy, ux);
+    for (let i = 0; i < 12; i++) { const b = a + (Math.random() - .5) * 1.2, d = 40 + Math.random() * 210; splat(P.x + Math.cos(b) * d, P.y + Math.sin(b) * d, 5 + Math.random() * 10, C.pink); }
+    fx('cone', {x: P.x, y: P.y, a});
+  }},
+  martillazo: {n: 'Martillazo', d: 'Caída en picada; al aterrizar, onda que crece con la velocidad.', cd: 4, cast() {
+    if (P.grounded) return shock(P.x, P.y, 90);
+    endHover(); P.pound = true; P.vx = 0; P.vy = 1800;
+  }},
+  lanzarme: {n: 'Lanzar-me', d: 'Dash apuntado a 1600 px/s que no gasta lanzamientos.', cd: 3, aim: 1, cast(ux, uy) { endHover(); P.vx = ux * 1600; P.vy = uy * 1600; }},
+  uppercut: {n: 'Uppercut', d: 'Lanza al aire y aturde a enemigos cercanos (no tanques) para el juggle.', cd: 4, cast() {
+    for (const e of G.enemies) if (e.type !== 'T' && Math.hypot(e.x - P.x, e.y - P.y) < 150) { e.vy = -800; e.stun = 1.5; }
+    endHover(); P.vy = Math.min(P.vy, -600);
+    fx('ring', {x: P.x, y: P.y, r: 150, c: C.paper});
+  }},
+  parry: {n: 'Contraataque', d: 'Parry de 0.25 s. Si acierta, recarga todo.', cd: 3, cast() { P.parry = .25; }},
+  estela: {n: 'Estela', d: 'Tu estela mata durante 2 s.', cd: 6, cast() { P.trailT = 2; }},
+  bala: {n: 'Tiempo bala', d: 'Todo al 25 % durante 1.5 s reales.', cd: 8, cast() { G.slow = 1.5; }},
+};
+
+// ---------- estado ----------
+const $ = s => document.querySelector(s);
+const cv = $('#c'), ctx = cv.getContext('2d');
+const COARSE = matchMedia('(pointer:coarse)').matches;
+let state = 'menu', G = null, P = null, hand = [], lastCard = 0, level = 1, seed = 0, score = 0;
+let cam = {x: 0, y: 0, z: 1}, dpr = 1, SAFE = {l: 0, r: 0, b: 0};
+const load = (k, d) => { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch { return d; } };
+const save = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} };
+let build = load('inercia.build', ['gancho', 'spray', 'bala']).filter(id => CARDS[id]);
+CFG.inverted = load('inercia.inv', true);
+
+function startLevel() {
+  const L = genLevel(seed, level);
+  G = {...L, shots: [], splats: [], fx: [], time: 0, combo: 0, comboT: 0, shake: 0, kills: 0, slow: 0};
+  P = {x: L.start.x, y: L.start.y - 13.01, vx: 0, vy: 0, r: 13, hp: 3, charges: CFG.charges, hoverReady: true, hovering: false, hoverT: 0, stored: 0,
+       grounded: false, inv: 0, parry: 0, ricochet: 0, trailT: 0, pound: false, pu: {turbo: 0, inf: 0, shield: 0}, trail: []};
+  P.safe = {x: P.x, y: P.y};
+  hand = build.map(id => ({id, cd: 0})); lastCard = 0;
+  cam = {x: P.x, y: P.y, z: cam.z};
+  ptrs.clear(); acc = 0;
+  state = 'play'; $('#menu').hidden = $('#msg').hidden = true; $('#pause').hidden = false;
+}
+
+// ---------- física ----------
+const tileAt = (tx, ty) => tx < 0 || tx >= G.W ? '#' : ty < 0 || ty >= H ? '.' : G.grid[ty][tx];
+const solid = c => c === '#' || c === 'B';
+const norm = (x, y) => { const l = Math.hypot(x, y) || 1; return {x: x / l, y: y / l}; };
+
+function hit(e, ax, v) {
+  const r = e.r, x0 = Math.floor((e.x - r) / T), x1 = Math.floor((e.x + r - .01) / T), y0 = Math.floor((e.y - r) / T), y1 = Math.floor((e.y + r - .01) / T);
+  for (let ty = y0; ty <= y1; ty++) for (let tx = x0; tx <= x1; tx++) {
+    const c = tileAt(tx, ty);
+    if (!solid(c)) continue;
+    if (ax) e.x = v > 0 ? tx * T - r : (tx + 1) * T + r;
+    else e.y = v > 0 ? ty * T - r : (ty + 1) * T + r;
+    return c;
+  }
+  return null;
+}
+function move(e, dt, grav, onHit) {
+  e.vy += CFG.gravity * grav * dt;
+  const n = Math.max(1, Math.ceil(Math.hypot(e.vx, e.vy) * dt / 6));
+  e.grounded = false;
+  for (let i = 0; i < n; i++) {
+    e.x += e.vx * dt / n; let c = hit(e, 1, e.vx); if (c) onHit(e, c, 1);
+    e.y += e.vy * dt / n; c = hit(e, 0, e.vy); if (c) onHit(e, c, 0);
+  }
+}
+function playerHit(p, c, ax) {
+  const rest = (c === 'B' ? 1.1 : CFG.restitution) * (P.ricochet > 0 ? 1.3 : 1);
+  const v = ax ? p.vx : p.vy, s = Math.abs(v), bounce = () => { if (P.ricochet > 0) { P.ricochet = 0; fx('ring', {x: p.x, y: p.y, r: 40, c: C.yellow}); } };
+  if (!ax && v > 0) { // suelo
+    if (P.pound) { P.pound = false; shock(p.x, p.y, 80 + v * .08); }
+    if (c === 'B' && s > 300) { p.vy = -v * rest; bounce(); return; }
+    if (s > 900) splat(p.x, p.y + p.r, 6 + s / 150, C.yellow);
+    p.vy = 0; p.grounded = true;
+  } else if (s > 300) { // pared o techo con rebote
+    if (s > 500) splat(p.x + (ax ? Math.sign(v) * p.r : 0), p.y + (ax ? 0 : Math.sign(v) * p.r), 6 + s / 120, C.yellow);
+    if (ax) p.vx = -v * rest; else p.vy = -v * rest;
+    bounce();
+  } else if (ax) p.vx = 0; else p.vy = 0;
+}
+const walkHit = (e, c, ax) => { if (ax) { e.vx = 0; e.dir *= -1; } else { if (e.vy > 0) e.grounded = true; e.vy = 0; } };
+const flyHit = (e, c, ax) => { if (ax) e.vx *= -.5; else e.vy *= -.5; };
+
+// ---------- acciones ----------
+function launchVec(dx, dy) {
+  const len = Math.hypot(dx, dy);
+  if (len < 12 || (!P.grounded && P.charges <= 0 && !(P.pu.inf > 0))) return null;
+  const s = CFG.inverted ? -1 : 1, pw = Math.min(len, CFG.maxDrag) / CFG.maxDrag * CFG.launchMax * (P.pu.turbo > 0 ? 1.3 : 1);
+  const m = Math.max(pw, (P.hovering ? P.stored : Math.hypot(P.vx, P.vy)) * CFG.keepMomentum);
+  return {vx: s * dx / len * m, vy: s * dy / len * m};
+}
+function launch(dx, dy) {
+  const v = launchVec(dx, dy);
+  if (!v) return;
+  if (!P.grounded && !(P.pu.inf > 0)) P.charges--;
+  P.vx = v.vx; P.vy = v.vy; P.pound = false; endHover();
+}
+function jump() {
+  if (P.grounded) { P.vy = -CFG.jump; return; }
+  const ty = Math.floor(P.y / T), side = solid(tileAt(Math.floor((P.x + P.r + 3) / T), ty)) ? 1 : solid(tileAt(Math.floor((P.x - P.r - 3) / T), ty)) ? -1 : 0;
+  if (side) { P.vx = -side * 520; P.vy = -CFG.jump; endHover(); }
+}
+function startAim() {
+  if (P.grounded || !P.hoverReady || P.hovering) return;
+  P.hovering = true; P.hoverReady = false; P.hoverT = 0; P.stored = Math.hypot(P.vx, P.vy); P.vx = P.vy = 0;
+}
+const endHover = () => { P.hovering = false; };
+function defaultAim() {
+  let best = null, bd = 600;
+  for (const e of G.enemies) { const d = Math.hypot(e.x - P.x, e.y - P.y); if (d < bd) { bd = d; best = e; } }
+  return best ? norm(best.x - P.x, best.y - P.y) : {x: Math.sign(P.vx) || 1, y: 0};
+}
+function castCard(i, dir) {
+  const c = hand[i];
+  if (!c || c.cd > 0) return;
+  const d = CARDS[c.id];
+  if (d.aim && !dir) dir = defaultAim();
+  if (d.cast(dir?.x, dir?.y) === false) return;
+  c.cd = d.cd; lastCard = i;
+}
+function kill(e) {
+  if (e.dead) return;
+  e.dead = true; G.kills++; G.combo++; G.comboT = 2.5; score += 100 * G.combo;
+  P.charges = CFG.charges; P.hoverReady = true; G.shake = Math.max(G.shake, .12);
+  for (let i = 0; i < 6; i++) splat(e.x + (Math.random() - .5) * e.r * 3, e.y + (Math.random() - .5) * e.r * 3, 4 + Math.random() * e.r * .7, i % 2 ? C.pink : C.yellow);
+}
+function shock(x, y, r) {
+  for (const e of G.enemies) if (Math.hypot(e.x - x, e.y - y) < r + e.r) kill(e);
+  fx('ring', {x, y, r, c: C.yellow}); G.shake = .25;
+  for (let i = 0; i < 8; i++) splat(x + (Math.random() - .5) * r * 1.4, y + (Math.random() - .5) * 10, 5 + Math.random() * 9, C.yellow);
+}
+function parryOk() {
+  P.parry = 0; P.inv = .5; P.charges = CFG.charges; P.hoverReady = true;
+  for (const c of hand) c.cd = 0;
+  fx('ring', {x: P.x, y: P.y, r: 60, c: C.paper});
+}
+function hurt(sx, sy, force) {
+  if (!force && (P.inv > 0 || P.pu.shield > 0)) return;
+  P.hp--; P.inv = 1.2; G.combo = 0; G.shake = .3;
+  P.vx = (Math.sign(P.x - sx) || 1) * 420; P.vy = -520; endHover();
+  if (P.hp <= 0) gameOver();
+}
+const splat = (x, y, r, c) => { G.splats.push({x, y, r, c}); if (G.splats.length > 700) G.splats.shift(); };
+const fx = (type, o) => G.fx.push({type, t: .3, ...o});
+
+// ---------- update 60 Hz fijo ----------
+function update(dt) {
+  G.time += dt;
+  for (const k in P.pu) P.pu[k] = Math.max(0, P.pu[k] - dt);
+  for (const k of ['inv', 'parry', 'ricochet', 'trailT']) P[k] = Math.max(0, P[k] - dt);
+  for (const c of hand) c.cd = Math.max(0, c.cd - dt);
+  if ((G.comboT -= dt) <= 0) G.combo = 0;
+
+  // jugador
+  const gs = P.hovering ? Math.min(1, (P.hoverT += dt) / CFG.hoverFade) : 1;
+  if (P.grounded) P.vx *= Math.exp(-5 * dt);
+  move(P, dt, gs, playerHit);
+  const sp = Math.hypot(P.vx, P.vy);
+  if (sp > CFG.maxSpeed) { P.vx *= CFG.maxSpeed / sp; P.vy *= CFG.maxSpeed / sp; }
+  if (P.grounded) { P.charges = CFG.charges; P.hoverReady = true; P.safe = {x: P.x, y: P.y}; }
+  P.trail.push({x: P.x, y: P.y, t: .45, k: P.trailT > 0});
+  P.trail = P.trail.filter(p => (p.t -= dt) > 0);
+  if ([-P.r + 2, P.r - 2].some(ox => { const y = P.y + P.r - 1; return tileAt(Math.floor((P.x + ox) / T), Math.floor(y / T)) === '^' && y % T > T / 2; })) hurt(P.x, P.y + T);
+  if (P.y > H * T + 300) { hurt(P.x, P.y, true); Object.assign(P, P.safe, {vx: 0, vy: 0}); }
+  if (state !== 'play') return;
+
+  // enemigos
+  for (const e of G.enemies) {
+    for (const k of ['stun', 'mark', 'slow']) e[k] = Math.max(0, e[k] - dt);
+    const sm = e.slow > 0 ? .3 : 1;
+    let dx = P.x - e.x, dy = P.y - e.y, d = Math.hypot(dx, dy) || 1;
+    if (e.type === 'F') {
+      if (e.stun <= 0 && d < 520) { e.vx += (dx / d * 130 * sm - e.vx) * 2 * dt; e.vy += (dy / d * 130 * sm - e.vy) * 2 * dt; }
+      else if (e.stun > 0) e.vy += CFG.gravity * .5 * dt;
+      else { e.vx *= .98; e.vy = Math.sin(G.time * 2 + e.x) * 30; }
+      move(e, dt, 0, flyHit);
+    } else {
+      if (e.stun <= 0 && e.grounded && e.type !== 'S') {
+        if (!solid(tileAt(Math.floor((e.x + e.dir * (e.r + 4)) / T), Math.floor((e.y + e.r + 4) / T)))) e.dir *= -1;
+        e.vx = e.dir * (e.type === 'T' ? 50 : 90) * sm;
+      } else if (e.grounded) e.vx *= .9;
+      move(e, dt, 1, walkHit);
+      if (e.type === 'S' && e.stun <= 0 && d < 650 && (e.cd -= dt * sm) <= 0) { e.cd = 2.2; G.shots.push({x: e.x, y: e.y, vx: dx / d * 380, vy: dy / d * 380, t: 4}); }
+    }
+    if (Math.hypot(P.x - e.x, P.y - e.y) < P.r + e.r) {
+      const lethal = P.parry > 0 || P.pu.shield > 0 || sp >= (e.type === 'T' ? CFG.tankSpeed : CFG.killSpeed) || (e.type !== 'T' && (e.stun > 0 || e.mark > 0));
+      if (lethal) { if (P.parry > 0) parryOk(); kill(e); P.vx *= .9; P.vy *= .9; } else hurt(e.x, e.y);
+    }
+    if (P.trail.some(p => p.k && Math.hypot(p.x - e.x, p.y - e.y) < e.r + 10)) kill(e);
+    if (e.y > H * T + 300) e.dead = true;
+  }
+  G.enemies = G.enemies.filter(e => !e.dead);
+
+  // proyectiles
+  for (const s of G.shots) {
+    s.x += s.vx * dt; s.y += s.vy * dt; s.t -= dt;
+    if (solid(tileAt(Math.floor(s.x / T), Math.floor(s.y / T)))) s.t = 0;
+    if (Math.hypot(s.x - P.x, s.y - P.y) < P.r + 5) { s.t = 0; if (P.parry > 0) parryOk(); else hurt(s.x, s.y); }
+  }
+  G.shots = G.shots.filter(s => s.t > 0);
+
+  for (const u of G.pups) if (!u.got && Math.hypot(u.x - P.x, u.y - P.y) < P.r + 16) { u.got = true; P.pu[u.type] = {turbo: 8, inf: 5, shield: 6}[u.type]; }
+  if (state === 'play' && Math.hypot(P.x - G.goal.x, P.y - (G.goal.y - 40)) < 55) win();
+}
+
+// ---------- input: pointer events (touch + mouse) y teclado ----------
+const ptrs = new Map(), mouse = {x: 0, y: 0};
+let lastTap = 0;
+const toWorld = (x, y) => ({x: (x - innerWidth / 2) / cam.z + cam.x, y: (y - innerHeight / 2) / cam.z + cam.y});
+const aims = p => p.kind === 'sling' || ((p.kind === 'card' || p.kind === 'quick') && hand[p.card] && CARDS[hand[p.card].id].aim && hand[p.card].cd <= 0);
+
+cv.addEventListener('pointerdown', e => {
+  if (state !== 'play') return;
+  try { cv.setPointerCapture(e.pointerId); } catch {}
+  const now = performance.now(), p = {sx: e.clientX, sy: e.clientY, x: e.clientX, y: e.clientY, t: now, moved: false, mouse: e.pointerType === 'mouse'};
+  const ci = cardRects().findIndex(r => e.clientX >= r.x && e.clientX <= r.x + r.w && e.clientY >= r.y && e.clientY <= r.y + r.h);
+  if (ci >= 0) { p.kind = 'card'; p.card = ci; }
+  else if (p.mouse) { p.kind = e.button === 2 ? 'quick' : 'sling'; p.card = lastCard; }
+  else if (e.clientX < innerWidth / 2) p.kind = 'sling';
+  else if (now - lastTap < CFG.doubleTap) { p.kind = 'quick'; p.card = lastCard; lastTap = 0; }
+  else p.kind = 'rtap';
+  ptrs.set(e.pointerId, p);
+});
+cv.addEventListener('pointermove', e => {
+  mouse.x = e.clientX; mouse.y = e.clientY;
+  const p = ptrs.get(e.pointerId);
+  if (!p) return;
+  p.x = e.clientX; p.y = e.clientY;
+  if (!p.moved && Math.hypot(p.x - p.sx, p.y - p.sy) > 12) { p.moved = true; if (state === 'play' && aims(p)) startAim(); }
+});
+function pointerEnd(e) {
+  const p = ptrs.get(e.pointerId);
+  if (!p) return;
+  ptrs.delete(e.pointerId);
+  if (state !== 'play' || e.type === 'pointercancel') return;
+  const dx = p.x - p.sx, dy = p.y - p.sy, now = performance.now();
+  if (p.kind === 'sling') { if (p.moved) { launch(dx, dy); endHover(); } else jump(); }
+  else if (p.kind === 'card' || p.kind === 'quick') {
+    let dir = null;
+    if (p.moved) dir = norm(dx, dy);
+    else if (p.mouse && p.kind === 'quick') { const w = toWorld(p.x, p.y); dir = norm(w.x - P.x, w.y - P.y); }
+    castCard(p.card, dir); endHover();
+  } else if (!p.moved && now - p.t < 250) lastTap = now;
+}
+cv.addEventListener('pointerup', pointerEnd);
+cv.addEventListener('pointercancel', pointerEnd);
+cv.addEventListener('contextmenu', e => e.preventDefault());
+addEventListener('blur', () => ptrs.clear());
+
+function cardKey(i) {
+  if (!hand[i]) return;
+  const w = toWorld(mouse.x, mouse.y);
+  castCard(i, CARDS[hand[i].id].aim ? norm(w.x - P.x, w.y - P.y) : null);
+}
+addEventListener('keydown', e => {
+  if (state !== 'play' || e.repeat || e.target.tagName === 'INPUT') return;
+  const k = e.key.toLowerCase();
+  if (k === ' ' || k === 'w' || k === 'arrowup') { jump(); e.preventDefault(); }
+  else if (k === '1' || k === '2' || k === '3') cardKey(+k - 1);
+  else if (k === 'q') cardKey(lastCard);
+  else if (k === 'r') { seed = rand(); startLevel(); }
+  else if (k === 'escape') showMenu();
+});
+
+// ---------- render ----------
+const F = (s, f = 'IBM Plex Mono') => `${s}px "${f}", ui-monospace, monospace`;
+const setT = (z, x, y) => ctx.setTransform(dpr * z, 0, 0, dpr * z, dpr * x, dpr * y);
+const circle = (x, y, r) => { ctx.beginPath(); ctx.arc(x, y, r, 0, 7); };
+const rrect = (x, y, w, h, r) => { ctx.beginPath(); ctx.roundRect ? ctx.roundRect(x, y, w, h, r) : ctx.rect(x, y, w, h); };
+const fmt = s => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
+
+function cardRects() {
+  const w = innerWidth, h = innerHeight, cw = Math.max(62, Math.min(92, w * .075)), chh = cw * 1.3, g = 8;
+  return hand.map((_, i) => ({x: w - SAFE.r - 14 - (hand.length - i) * (cw + g) + g, y: h - SAFE.b - 14 - chh, w: cw, h: chh}));
+}
+
+function render(rdt) {
+  const w = innerWidth, h = innerHeight;
+  setT(1, 0, 0);
+  ctx.fillStyle = C.ink; ctx.fillRect(0, 0, w, h);
+  if (!G) return;
+  const sp = Math.hypot(P.vx, P.vy);
+  const zt = Math.min(h / 560, w / 900) * (1 - Math.min(.22, sp / 7000));
+  cam.z += (zt - cam.z) * Math.min(1, rdt * 3);
+  const vw = w / cam.z, vh = h / cam.z;
+  // la cámara deja al jugador arriba-izquierda para que la fila de cartas no tape la acción (D-04)
+  const tx = P.x + P.vx * .18 + vw * .12, ty = Math.min(P.y + P.vy * .08 + vh * .08, H * T - vh / 2 + 120);
+  cam.x += (tx - cam.x) * Math.min(1, rdt * 6); cam.y += (ty - cam.y) * Math.min(1, rdt * 6);
+  let ox = 0, oy = 0;
+  if (G.shake > 0) { G.shake -= rdt; ox = (Math.random() - .5) * 12; oy = (Math.random() - .5) * 12; }
+
+  // fondo con parallax
+  setT(cam.z, w / 2 - cam.x * .5 * cam.z, h / 2 - (cam.y * .5 + H * T * .5) * cam.z);
+  ctx.fillStyle = C.bg;
+  for (const b of G.bg) ctx.fillRect(b.x, H * T - b.h, b.w, b.h + 400);
+
+  setT(cam.z, w / 2 - cam.x * cam.z + ox, h / 2 - cam.y * cam.z + oy);
+  const x0 = Math.max(0, Math.floor((cam.x - vw / 2) / T) - 1), x1 = Math.min(G.W - 1, Math.ceil((cam.x + vw / 2) / T) + 1);
+  for (let y = 0; y < H; y++) for (let x = x0; x <= x1; x++) {
+    const c = G.grid[y][x], px = x * T, py = y * T;
+    if (c === '#') {
+      ctx.fillStyle = C.concrete; ctx.fillRect(px, py, T + .5, T + .5);
+      if (!solid(tileAt(x, y - 1))) { ctx.fillStyle = C.edge; ctx.fillRect(px, py, T + .5, 4); }
+    } else if (c === 'B') {
+      ctx.fillStyle = C.blue; ctx.fillRect(px, py, T + .5, T + .5);
+      ctx.fillStyle = 'rgba(255,255,255,.25)'; ctx.fillRect(px + 6, py, 6, T); ctx.fillRect(px + 22, py, 6, T);
+    } else if (c === '^') {
+      ctx.fillStyle = C.orange; ctx.beginPath();
+      for (let i = 0; i < 3; i++) { ctx.moveTo(px + i * 13.3, py + T); ctx.lineTo(px + i * 13.3 + 6.6, py + T / 2); ctx.lineTo(px + (i + 1) * 13.3, py + T); }
+      ctx.fill();
+    }
+  }
+  // pintura persistente
+  for (const s of G.splats) { ctx.globalAlpha = .8; ctx.fillStyle = s.c; circle(s.x, s.y, s.r); ctx.fill(); }
+  ctx.globalAlpha = 1;
+
+  // meta
+  const gx = G.goal.x, gy = G.goal.y;
+  ctx.fillStyle = C.paper; ctx.fillRect(gx - 2, gy - 90, 4, 90);
+  ctx.fillStyle = C.yellow; ctx.beginPath(); ctx.moveTo(gx + 2, gy - 90); ctx.lineTo(gx + 46 + Math.sin(G.time * 5) * 4, gy - 76); ctx.lineTo(gx + 2, gy - 62); ctx.fill();
+
+  // power-ups
+  for (const u of G.pups) if (!u.got) {
+    const col = {turbo: C.orange, inf: C.yellow, shield: C.blue}[u.type], yy = u.y + Math.sin(G.time * 3 + u.x) * 4;
+    ctx.save(); ctx.translate(u.x, yy); ctx.rotate(G.time * 2); ctx.fillStyle = col; ctx.fillRect(-11, -11, 22, 22); ctx.restore();
+    ctx.fillStyle = C.ink; ctx.font = F(14); ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText({turbo: '»', inf: '∞', shield: '◆'}[u.type], u.x, yy + 1);
+  }
+
+  // enemigos
+  for (const e of G.enemies) {
+    ctx.save(); ctx.translate(e.x, e.y);
+    if (e.stun > 0) ctx.rotate(Math.sin(G.time * 30) * .3);
+    ctx.fillStyle = e.slow > 0 ? '#b25a9a' : C.pink;
+    if (e.type === 'F') { const a = Math.atan2(P.y - e.y, P.x - e.x); ctx.rotate(a); ctx.beginPath(); ctx.moveTo(e.r * 1.3, 0); ctx.lineTo(-e.r, -e.r); ctx.lineTo(-e.r, e.r); ctx.fill(); }
+    else if (e.type === 'S') { circle(0, 0, e.r); ctx.fill(); const a = Math.atan2(P.y - e.y, P.x - e.x); ctx.strokeStyle = C.pink; ctx.lineWidth = 7; ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(Math.cos(a) * 26, Math.sin(a) * 26); ctx.stroke(); }
+    else { ctx.fillRect(-e.r, -e.r, e.r * 2, e.r * 2); if (e.type === 'T') { ctx.strokeStyle = C.ink; ctx.lineWidth = 4; ctx.strokeRect(-e.r + 5, -e.r + 5, e.r * 2 - 10, e.r * 2 - 10); } }
+    if (e.type !== 'F') { ctx.fillStyle = C.ink; ctx.fillRect(e.dir * 4 - 6, -e.r * .4, 4, 5); ctx.fillRect(e.dir * 4 + 3, -e.r * .4, 4, 5); }
+    ctx.restore();
+    if (e.mark > 0) { ctx.strokeStyle = C.yellow; ctx.lineWidth = 2; ctx.setLineDash([5, 5]); circle(e.x, e.y, e.r + 7); ctx.stroke(); ctx.setLineDash([]); }
+  }
+  ctx.fillStyle = C.orange;
+  for (const s of G.shots) { circle(s.x, s.y, 6); ctx.fill(); }
+
+  // estela
+  ctx.lineCap = ctx.lineJoin = 'round';
+  if (P.trail.length > 1) {
+    ctx.beginPath(); P.trail.forEach((p, i) => i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
+    const lethal = P.trail.some(p => p.k);
+    ctx.strokeStyle = lethal ? C.pink : 'rgba(255,225,77,.25)'; ctx.lineWidth = lethal ? 16 : P.r * 1.4; ctx.stroke();
+  }
+
+  // jugador
+  if (!(P.inv > 0 && Math.floor(G.time * 20) % 2)) {
+    const st = Math.min(.35, sp / 4000);
+    ctx.save(); ctx.translate(P.x, P.y); ctx.rotate(Math.atan2(P.vy, P.vx)); ctx.scale(1 + st, 1 - st * .7);
+    ctx.fillStyle = C.yellow; circle(0, 0, P.r); ctx.fill();
+    ctx.restore();
+    ctx.lineWidth = 2;
+    if (sp >= CFG.killSpeed) { ctx.strokeStyle = C.paper; circle(P.x, P.y, P.r + 6); ctx.stroke(); }
+    if (sp >= CFG.tankSpeed) { circle(P.x, P.y, P.r + 11); ctx.stroke(); }
+    if (P.pu.shield > 0) { ctx.strokeStyle = C.blue; ctx.lineWidth = 4; circle(P.x, P.y, P.r + 16); ctx.stroke(); }
+    if (P.parry > 0) { ctx.strokeStyle = C.paper; ctx.lineWidth = 5; circle(P.x, P.y, P.r + 20); ctx.stroke(); }
+    if (P.hovering) { ctx.strokeStyle = C.blue; ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(P.x, P.y, P.r + 6, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * (1 - Math.min(1, P.hoverT / CFG.hoverFade))); ctx.stroke(); }
+  }
+
+  // efectos
+  for (const f of G.fx) {
+    ctx.globalAlpha = Math.max(0, f.t / .3); ctx.strokeStyle = f.c || C.pink; ctx.fillStyle = C.pink; ctx.lineWidth = 4;
+    if (f.type === 'ring') { circle(f.x, f.y, f.r * (1.2 - f.t / .3 * .4)); ctx.stroke(); }
+    else if (f.type === 'line') { ctx.beginPath(); ctx.moveTo(f.x1, f.y1); ctx.lineTo(f.x2, f.y2); ctx.stroke(); }
+    else if (f.type === 'cone') { ctx.globalAlpha *= .35; ctx.beginPath(); ctx.moveTo(f.x, f.y); ctx.arc(f.x, f.y, 260, f.a - .64, f.a + .64); ctx.fill(); }
+    f.t -= rdt;
+  }
+  ctx.globalAlpha = 1;
+  G.fx = G.fx.filter(f => f.t > 0);
+
+  // apuntado: trayectoria del slingshot y línea de la carta
+  for (const p of ptrs.values()) {
+    if (!p.moved || !aims(p)) continue;
+    const dx = p.x - p.sx, dy = p.y - p.sy;
+    if (p.kind === 'sling') {
+      const v = launchVec(dx, dy);
+      if (!v) continue;
+      let x = P.x, y = P.y, vx = v.vx, vy = v.vy;
+      ctx.fillStyle = C.paper;
+      for (let i = 0; i < 22; i++) {
+        for (let k = 0; k < 2; k++) { vy += CFG.gravity / 60; x += vx / 60; y += vy / 60; }
+        ctx.globalAlpha = 1 - i / 22; circle(x, y, 3.5); ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+    } else {
+      const d = norm(dx, dy);
+      ctx.strokeStyle = C.pink; ctx.lineWidth = 3; ctx.setLineDash([10, 8]);
+      ctx.beginPath(); ctx.moveTo(P.x, P.y); ctx.lineTo(P.x + d.x * 260, P.y + d.y * 260); ctx.stroke(); ctx.setLineDash([]);
+    }
+  }
+
+  setT(1, 0, 0);
+  for (const p of ptrs.values()) if (p.kind === 'sling' && p.moved) {
+    ctx.strokeStyle = launchVec(p.x - p.sx, p.y - p.sy) ? 'rgba(239,232,216,.5)' : 'rgba(255,79,154,.5)'; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.moveTo(p.sx, p.sy); ctx.lineTo(p.x, p.y); ctx.stroke(); circle(p.sx, p.sy, 8); ctx.stroke();
+  }
+  hud(sp);
+}
+
+function hud(sp) {
+  const w = innerWidth, h = innerHeight, L = 16 + SAFE.l, top = 14;
+  ctx.textBaseline = 'top'; ctx.textAlign = 'left';
+  for (let i = 0; i < 3; i++) { ctx.fillStyle = i < P.hp ? C.pink : C.dim; ctx.fillRect(L + i * 22, top, 16, 16); }
+  for (let i = 0; i < CFG.charges; i++) {
+    ctx.fillStyle = P.pu.inf > 0 || P.grounded || i < P.charges ? C.yellow : C.dim;
+    ctx.beginPath(); ctx.moveTo(L + i * 22, top + 24); ctx.lineTo(L + i * 22 + 16, top + 32); ctx.lineTo(L + i * 22, top + 40); ctx.fill();
+  }
+  ctx.fillStyle = P.hoverReady || P.hovering ? C.blue : C.dim; circle(L + CFG.charges * 22 + 8, top + 32, 7); ctx.fill();
+  let y = top + 50;
+  ctx.font = F(12); ctx.fillStyle = C.paper;
+  for (const k in P.pu) if (P.pu[k] > 0) { ctx.fillText(`${{turbo: 'turbo', inf: 'lanzamientos ∞', shield: 'escudo'}[k]} ${P.pu[k].toFixed(1)}`, L, y); y += 16; }
+  if (P.ricochet > 0) { ctx.fillText('ricochet listo', L, y); y += 16; }
+  if (G.combo > 1) { ctx.font = F(30, 'Permanent Marker'); ctx.fillStyle = C.yellow; ctx.fillText(`x${G.combo}`, L, y + 2); }
+
+  // velocímetro
+  const bw = Math.min(220, w * .25), bx = w / 2 - bw / 2, scale = bw / 1600;
+  ctx.fillStyle = C.dim; ctx.fillRect(bx, top + 4, bw, 6);
+  ctx.fillStyle = sp >= CFG.killSpeed ? C.paper : C.yellow; ctx.fillRect(bx, top + 4, Math.min(bw, sp * scale), 6);
+  ctx.fillStyle = C.pink; ctx.fillRect(bx + CFG.killSpeed * scale, top, 2, 14); ctx.fillRect(bx + CFG.tankSpeed * scale, top, 2, 14);
+  ctx.font = F(11); ctx.fillStyle = C.paper; ctx.textAlign = 'center'; ctx.fillText(`${Math.round(sp)} px/s`, w / 2, top + 16);
+
+  ctx.textAlign = 'right';
+  ctx.fillText(`NIVEL ${level} · ${fmt(G.time)} · ${score} pts`, w - 64 - SAFE.r, top + 2);
+  ctx.fillStyle = '#8d93a1'; ctx.fillText(`semilla ${seed}`, w - 64 - SAFE.r, top + 18);
+
+  if (level === 1 && G.time < 7) {
+    ctx.globalAlpha = Math.min(1, 7 - G.time); ctx.font = F(13); ctx.fillStyle = C.paper; ctx.textAlign = 'center';
+    if (COARSE) {
+      ctx.fillText('arrastrá y soltá: lanzarte · toque: salto', w * .25, h * .72);
+      ctx.fillText('cartas ↘ · doble toque: repetir última', w * .72, h * .45);
+      ctx.fillStyle = 'rgba(239,232,216,.15)'; ctx.fillRect(w / 2 - 1, h * .2, 2, h * .6);
+    } else ctx.fillText('arrastrá el mouse: lanzarte · clic/espacio: salto · 1-3: cartas al cursor · Q/clic der.: repetir', w / 2, h * .8);
+    ctx.globalAlpha = 1;
+  }
+
+  // fila de cartas (D-04)
+  const active = new Set([...ptrs.values()].filter(p => p.kind === 'card' || p.kind === 'quick').map(p => p.card));
+  cardRects().forEach((r, i) => {
+    const c = hand[i], d = CARDS[c.id], cx = r.x + r.w / 2;
+    ctx.fillStyle = C.paper; rrect(r.x, r.y, r.w, r.h, 8); ctx.fill();
+    if (c.cd > 0) { ctx.save(); ctx.clip(); ctx.fillStyle = 'rgba(20,22,27,.75)'; ctx.fillRect(r.x, r.y, r.w, r.h * c.cd / d.cd); ctx.restore(); }
+    if (active.has(i) || i === lastCard) { ctx.strokeStyle = active.has(i) ? C.pink : C.yellow; ctx.lineWidth = active.has(i) ? 4 : 2.5; rrect(r.x, r.y, r.w, r.h, 8); ctx.stroke(); }
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillStyle = c.cd > 0 ? C.paper : C.ink;
+    ctx.font = F(Math.min(16, r.w * .2, (r.w - 10) / (d.n.length * .6)), 'Permanent Marker');
+    ctx.fillText(d.n, cx, r.y + r.h * .42);
+    ctx.font = F(10);
+    ctx.fillText(c.cd > 0 ? c.cd.toFixed(1) : d.aim ? 'apuntar' : 'soltar', cx, r.y + r.h * .72);
+    if (!COARSE) { ctx.textAlign = 'left'; ctx.textBaseline = 'top'; ctx.fillText(i + 1, r.x + 6, r.y + 5); }
+  });
+}
+
+// ---------- loop ----------
+const STEP = 1 / 60;
+let acc = 0, last = 0;
+function frame(now) {
+  const rdt = Math.min(.05, (now - last) / 1000 || 0);
+  last = now;
+  if (state === 'play') {
+    if (G.slow > 0) G.slow -= rdt;
+    acc += rdt * (G.slow > 0 ? .25 : 1);
+    while (acc >= STEP && state === 'play') { update(STEP); acc -= STEP; }
+  }
+  render(rdt);
+  requestAnimationFrame(frame);
+}
+function resize() {
+  dpr = Math.min(2, devicePixelRatio || 1);
+  cv.width = innerWidth * dpr; cv.height = innerHeight * dpr;
+  const s = getComputedStyle($('#safe'));
+  SAFE = {l: parseFloat(s.paddingLeft) || 0, r: parseFloat(s.paddingRight) || 0, b: parseFloat(s.paddingBottom) || 0};
+}
+addEventListener('resize', resize);
+
+// ---------- menú y mensajes ----------
+function drawMenu() {
+  $('#cards').innerHTML = Object.entries(CARDS).map(([id, c]) =>
+    `<button data-id="${id}" class="card${build.includes(id) ? ' on' : ''}"><b>${c.n}</b><span>${c.d}</span><i>${c.aim ? 'apuntable · ' : ''}recarga ${c.cd} s</i></button>`).join('');
+  $('#cnt').textContent = `${build.length}/3`;
+  $('#play').disabled = build.length !== 3;
+  $('#inv').textContent = `Slingshot: ${CFG.inverted ? 'invertido (tirás hacia atrás)' : 'directo (arrastrás hacia donde vas)'}`;
+}
+$('#cards').onclick = e => {
+  const b = e.target.closest('button');
+  if (!b) return;
+  const id = b.dataset.id;
+  build = build.includes(id) ? build.filter(x => x !== id) : [...build, id].slice(-3);
+  save('inercia.build', build); drawMenu();
+};
+$('#inv').onclick = () => { CFG.inverted = !CFG.inverted; save('inercia.inv', CFG.inverted); drawMenu(); };
+$('#play').onclick = () => {
+  level = 1; score = 0; seed = parseInt($('#seed').value) || rand();
+  if (COARSE) document.documentElement.requestFullscreen?.().catch(() => {});
+  startLevel();
+};
+$('#pause').onclick = () => showMenu();
+function showMenu() { state = 'menu'; drawMenu(); $('#msg').hidden = $('#pause').hidden = true; $('#menu').hidden = false; }
+function showMsg(title, body, [l1, f1], [l2, f2]) {
+  state = 'msg'; $('#pause').hidden = true;
+  $('#mt').textContent = title; $('#mb').textContent = body;
+  $('#m1').textContent = l1; $('#m1').onclick = f1;
+  $('#m2').textContent = l2; $('#m2').onclick = f2;
+  $('#msg').hidden = false;
+}
+function win() {
+  score += Math.max(0, Math.round(2000 - G.time * 15));
+  showMsg(`Nivel ${level} limpio`, `${fmt(G.time)} · ${G.kills} kills · ${score} pts · semilla ${seed}`,
+    ['Siguiente nivel', () => { level++; seed = rand(); startLevel(); }], ['Cambiar build', showMenu]);
+}
+function gameOver() {
+  showMsg('Te borraron', `Nivel ${level} · ${score} pts · semilla ${seed}`,
+    ['Reintentar este mapa', () => { score = 0; startLevel(); }], ['Cambiar build', showMenu]);
+}
+
+resize(); drawMenu(); requestAnimationFrame(frame);
+</script>
+</body>
+</html>
