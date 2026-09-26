@@ -98,9 +98,11 @@ kbd{font:600 11px/1.6 "IBM Plex Mono",monospace;background:var(--bone);color:var
       <button id="fs" class="tog fs"><svg><use href="#i-fs"/></svg><span>Pantalla completa</span></button>
     </div>
     <h1 data-t="Inercia">Inercia</h1>
-    <p class="lede">Lanzate con el slingshot, chocá a alta velocidad para borrar enemigos y llegá a la meta. Nada te frena salvo vos.</p>
+    <p class="lede">Salí disparado del cañón, chocá a alta velocidad y rompé todos los núcleos. Tu barra de movimiento es todo lo que tenés: si te frenás, te enfriás.</p>
     <h2>Build · elegí 3 cartas <b id="cnt">0/3</b></h2>
     <div id="cards" class="grid"></div>
+    <h2>Pasiva · opcional <b id="pcnt"></b></h2>
+    <div id="passives" class="grid"></div>
     <div class="row">
       <button id="play" class="go">Jugar</button>
       <button id="inv" class="tog"></button>
@@ -118,9 +120,11 @@ kbd{font:600 11px/1.6 "IBM Plex Mono",monospace;background:var(--bone);color:var
         <li><kbd>R</kbd> mapa nuevo · <kbd>F</kbd> pantalla completa · <kbd>Esc</kbd> menú</li>
       </ul></div>
       <div><b>Reglas</b><ul>
-        <li>≥ 650 px/s matás (anillo blanco); tanques piden ≥ 1000</li>
-        <li>2 lanzamientos en el aire; suelo o kill recargan lanzamientos y hover</li>
-        <li>Apuntar en el aire te frena (hover); la gravedad vuelve en 1.5 s</li>
+        <li>≥ 650 px/s matás (anillo blanco); tanques y mini-jefes piden ≥ 1000</li>
+        <li>Lanzarte y el hover gastan barra: más potencia, más gasto</li>
+        <li>Recargan los orbes, romper núcleos y los kills (más cuanto más alto tu estilo)</li>
+        <li>Ir lento te enfría: si se llena el frío, perdés una vida</li>
+        <li>Rompé todos los núcleos para pasar; el escudado cae con su mini-jefe</li>
       </ul></div>
     </div>
   </div>
@@ -143,37 +147,54 @@ const CFG = {
   launchMax: 1300,    // px/s con arrastre completo
   maxDrag: 140,       // px de pantalla para potencia completa
   keepMomentum: 0.5,  // fracción de la velocidad previa que conserva un lanzamiento (0 = D-03 estricto)
-  charges: 2,         // lanzamientos en el aire; suelo o kill los recargan
-  hoverFade: 1.5,     // s para que la gravedad vuelva de 0 a 1 al apuntar en el aire
+  bar: 100,           // barra de movimiento: el recurso de lanzamientos y hover
+  launchBase: 12, launchPow: 28, // costo de un lanzamiento = base + pow × fracción de potencia
+  hoverCost: 15,      // barra/s al apuntar en el aire; sube hasta el doble al llegar a hoverMax
+  hoverMax: 2,        // s máximos de hover; la gravedad vuelve de 0 a 1 en ese lapso
+  orbRefill: 30,      // barra que da un orbe
+  coldSpeed: 400, coldTime: 2.5, coldRefill: 35, // move or die: por debajo de coldSpeed te enfriás; lleno = −1 vida y algo de barra
+  styleDecay: 14,     // estilo/s; 100 de estilo por rango (D C B A S)
+  rankSpeed: .06,     // +potencia y +velocidad máx. por rango
+  rankRefill: [.35, .5, .65, .8, 1], // fracción de la barra que recarga un kill según el rango
   killSpeed: 650, tankSpeed: 1000, maxSpeed: 2400,
   jump: 720, restitution: 0.45, doubleTap: 300,
   inverted: true,     // slingshot opuesto al arrastre (se cambia en el menú)
 };
-const T = CFG.tile, H = 16;
+const T = CFG.tile, CH = 16; // CH = lado de un chunk en baldosas
 // tintas riso: hueso, girasol, tomate, teal y cobalto sobre noche
 const C = {ink:'#0f0e13', night:'#141219', far:'#100e14', bg:'#1a1620', win:'#2e2835', concrete:'#3a3443', speck:'#2b2731', edge:'#5d5667',
   paper:'#f3e9d2', yellow:'#ffc42e', red:'#ff5436', ember:'#c4391f', slowed:'#9a4f6b', teal:'#22c4b0', blue:'#3d63f5', blueHi:'#7f97ff', dim:'#3a3542', muted:'#8b8496'};
 
-// ---------- chunks: 16 filas; bordes abiertos salvo el piso (filas 14-15) ----------
-// # sólido · B goma · ^ pinchos · ? enemigo al azar · W caminante · F volador · S torreta · T tanque · * power-up · @ inicio · G meta
-const ch = (...rows) => [...Array(H - rows.length).fill('.'.repeat(rows[0].length)), ...rows];
-const START = ch('..@.........', '############', '############');
-const END = ch('.........G..', '############', '############');
+// ---------- chunks: 16×16, se arman en una grilla 2D cerrada por un borde sólido ----------
+// # sólido · B goma · ^ pinchos · ? enemigo al azar · W caminante · F volador · S torreta · T tanque
+// o orbe · * orbe que puede traer power-up · N lugar posible de núcleo · @ cañón de inicio
+const START = [
+  '................', '................', '.....o....o.....', '................', '................', '..####....####..', '................', '.......o........',
+  '................', '................', '.....######.....', '................', '...o........o...', '................', '.@..............', '####........####'];
 const MID = [
-  ch('......*.........', '.....####.......', '................', '...?.......?....', '################', '################'),
-  ch('.......B........', '.......B........', '.......B....?...', '.......B...###..', '.......B........', '..*....B........', '.......B........', '####........####', '####........####'),
-  ch('............?...', '...........####.', '................', '........*.......', '.......####.....', '................', '...?............', '..####..........', '................', '################', '################'),
-  ch('....F.....F.....', '................', '................', '.......*........', '.....######.....', '................', '..^^^^^^^^^^^^..', '################', '################'),
-  ch('.......*........', '..BBBBBBBBBBBB..', '................', '................', '................', '....?....?......', '################', '################'),
-  ch('..........S.....', '.........####...', '................', '................', '................', '....S...........', '...####.........', '................', '................', '..........?.....', '################', '################'),
-  ch('.......*........', '................', '................', '.B............B.', '.B............B.', '.B............B.', '.B............B.', '.B............B.', '.B.....T......B.', '################', '################'),
-  ch('.....?......?...', '....###....###..', '................', '................', '................', '................', '........*.......', '.......##.......', '###..........###', '###..........###'),
-  ch('.......##.......', '.......##.......', '.......##.......', '.......##.......', '.......##.......', '.......##.....?.', '.......##.......', '.......##.......', '...?...##.......', '.......##.......', '################', '################'),
-  ch('...F......F.....', '................', '.......F........', '................', '................', '................', '................', '................', '....*...........', '...###....###...', '................', '................', '################', '################'),
+  ['................', '..........o...N.', '...........#####', '................', '......o.........', '.....#####......', '................', '..?.............',
+   '.####......o....', '..........####..', '................', '.....o..........', '....####....?...', '...........###..', '................', '................'],
+  ['................', '.......N........', '................', '.B............B.', '.B....o..o....B.', '.B............B.', '.B....####....B.', '.B............B.',
+   '.B..?......?..B.', '.B.####..####.B.', '.B............B.', '.B.....oo.....B.', '.B............B.', '.BBB........BBB.', '................', '................'],
+  ['.....S..........', '....####....o...', '................', '...........N....', '..o.............', '.........####...', '................', '.####...........',
+   '................', '......o....S....', '..........####..', '................', '...*............', '..###...........', '................', '................'],
+  ['................', '.....o....o.....', '................', '..F..........F..', '................', '.......N........', '................', '...####..####...',
+   '................', '................', '.o............o.', '.##..........##.', '................', '.....^^^^^^.....', '....########....', '................'],
+  ['.......##.......', '.......##...o...', '..o....##.......', '.......##..###..', '.###...##.......', '.......##.......', '.......##....N..', '...?...##.......',
+   '..###..##..o....', '.......##.###...', '...o...##.......', '.......##.......', '.......##..?....', '....*..##.####..', '...###.##.......', '................'],
+  ['................', '..o.........o...', '................', '....B......B....', '....B..N...B....', '....B......B....', '....BBBBBBBB....', '................',
+   '.o............o.', '................', '.......*........', '................', '..#....T.....#..', '..############..', '................', '................'],
+  ['...F........F...', '................', '.......o........', '......###.......', '................', '..N.........o...', '.###.......###..', '................',
+   '.......?........', '................', '...o.....####...', '..###...........', '.........o......', '................', '.....####.......', '................'],
+  ['................', '.#####......o...', '............####', '...o............', '..####..........', '.........?......', '........#####...', '..N.............',
+   '#####...........', '..........o.....', '.........#####..', '...o............', '..###...*.......', '.......####.....', '................', '................'],
+  ['................', '...o........o...', '................', '................', '.....?....?.....', '....########....', '................', '.o............o.',
+   '.##....N.....##.', '................', '................', '...##......##...', '................', '......o..o......', '.....######.....', '................'],
+  ['..#..........#..', '..#....o.....#..', '..#..........#..', '..#...###....#..', '..#..........#..', '..#.?......N.#..', '..####....####..', '................',
+   '.....o....o.....', '................', '.S............S.', '###..........###', '................', '.......*........', '......###.......', '................'],
 ];
-for (const c of [START, END, ...MID]) console.assert(
-  c.length === H && c.every(r => r.length === c[0].length) &&
-  c.every((r, y) => y >= 14 ? r[0] === '#' && r.at(-1) === '#' : r[0] === '.' && r.at(-1) === '.'),
+for (const c of [START, ...MID]) console.assert(
+  c.length === CH && c.every(r => r.length === CH) && (c === START ? c.join('').includes('@') : c.join('').split('N').length === 2),
   'chunk mal formado', c);
 
 function mulberry32(a) { return () => { a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
@@ -182,30 +203,41 @@ const rand = () => Math.floor(Math.random() * 1e6);
 // ponytail: sin validador de alcanzabilidad; los chunks se diseñan pasables y el slingshot cubre huecos. Agregarlo con la sim determinista (F3).
 function genLevel(seed, lvl) {
   const r = mulberry32(seed), pick = a => a[Math.floor(r() * a.length)];
-  const parts = [START];
-  for (let i = 0; i < Math.min(14, 3 + lvl * 2); i++) parts.push(pick(MID));
-  parts.push(END);
-  const grid = Array.from({length: H}, (_, y) => [...parts.map(p => p[y]).join('')]);
-  const L = {grid, W: grid[0].length, enemies: [], pups: []};
+  const [gw, gh] = [[3, 2], [3, 3], [4, 3]][lvl - 1] || [4, 4];
+  const W = gw * CH + 2, Hm = gh * CH + 2, sx = Math.floor(r() * gw);
+  const grid = Array.from({length: Hm}, (_, y) => Array.from({length: W}, (_, x) => x % (W - 1) && y % (Hm - 1) ? '.' : '#'));
+  for (let cy = 0; cy < gh; cy++) for (let cx = 0; cx < gw; cx++) {
+    const c = cy === gh - 1 && cx === sx ? START : pick(MID);
+    for (let y = 0; y < CH; y++) for (let x = 0; x < CH; x++) grid[1 + cy * CH + y][1 + cx * CH + x] = c[y][x];
+  }
+  const L = {grid, W, H: Hm, enemies: [], orbs: [], cores: []}, spots = [];
   const pool = lvl >= 3 ? 'WWFFST' : lvl >= 2 ? 'WWFFS' : 'WWF';
-  for (let y = 0; y < H; y++) for (let x = 0; x < L.W; x++) {
+  for (let y = 0; y < Hm; y++) for (let x = 0; x < W; x++) {
     let c = grid[y][x];
     if ('.#B^'.includes(c)) continue;
     grid[y][x] = '.';
     if (c === '?') { if (r() > Math.min(.95, .45 + lvl * .1)) continue; c = pick(pool); }
     const cx = x * T + T / 2, by = (y + 1) * T;
     if (c === '@') L.start = {x: cx, y: by};
-    else if (c === 'G') L.goal = {x: cx, y: by};
-    else if (c === '*') { if (r() < .65) L.pups.push({x: cx, y: by - T / 2, type: pick(['turbo', 'inf', 'shield'])}); }
+    else if (c === 'N') spots.push({x: cx, y: by - T / 2});
+    else if (c === 'o' || c === '*') L.orbs.push({x: cx, y: by - T / 2, pu: c === '*' && r() < .35 ? pick(['turbo', 'inf', 'shield']) : null});
     else L.enemies.push(enemy(c, cx, by));
   }
-  L.bg = Array.from({length: Math.ceil(L.W / 3) + 20}, (_, i) => ({x: i * 60 - 300 + r() * 20, w: 30 + r() * 60, h: 100 + r() * 360}));
-  L.far = Array.from({length: Math.ceil(L.W / 5) + 40}, (_, i) => ({x: i * 56 - 800 + r() * 16, w: 24 + r() * 44, h: 140 + r() * 480}));
+  // núcleos: el nivel se limpia al romperlos todos
+  for (let i = spots.length - 1; i > 0; i--) { const j = Math.floor(r() * (i + 1)); [spots[i], spots[j]] = [spots[j], spots[i]]; }
+  L.cores = spots.slice(0, Math.min(6, 2 + lvl)).map(s => ({...s, r: 20, shield: false, dead: false}));
+  if (lvl >= 2) { // mini-jefe: volador élite que custodia (y escuda) un núcleo
+    const c = L.cores[0], b = enemy('F', c.x, c.y - 60);
+    Object.assign(b, {boss: true, core: c, r: 24, hp: 3}); c.shield = true;
+    L.enemies.push(b);
+  }
+  L.bg = Array.from({length: Math.ceil(W / 3) + 20}, (_, i) => ({x: i * 60 - 300 + r() * 20, w: 30 + r() * 60, h: 100 + r() * 360}));
+  L.far = Array.from({length: Math.ceil(W / 5) + 40}, (_, i) => ({x: i * 56 - 800 + r() * 16, w: 24 + r() * 44, h: 140 + r() * 480}));
   return L;
 }
 function enemy(type, x, by) {
   const r = {W: 16, F: 14, S: 16, T: 26}[type];
-  return {type, x, y: by - r - .01, vx: 0, vy: 0, r, dir: 1, stun: 0, mark: 0, slow: 0, cd: 1 + Math.random(), grounded: false};
+  return {type, x, y: by - r - .01, vx: 0, vy: 0, r, hp: 1, iframe: 0, dir: 1, stun: 0, mark: 0, slow: 0, cd: 1 + Math.random(), grounded: false};
 }
 
 // ---------- cartas: definición separada de cómo se obtienen (D-07) ----------
@@ -236,9 +268,9 @@ const CARDS = {
     if (P.grounded) return shock(P.x, P.y, 90);
     endHover(); P.pound = true; P.vx = 0; P.vy = 1800;
   }},
-  lanzarme: {n: 'Lanzar-me', d: 'Dash apuntado a 1600 px/s que no gasta lanzamientos.', cd: 3, aim: 1, cast(ux, uy) { endHover(); P.vx = ux * 1600; P.vy = uy * 1600; }},
+  lanzarme: {n: 'Lanzar-me', d: 'Dash apuntado a 1600 px/s que no gasta barra.', cd: 6, aim: 1, cast(ux, uy) { endHover(); P.vx = ux * 1600; P.vy = uy * 1600; }},
   uppercut: {n: 'Uppercut', d: 'Lanza al aire y aturde a enemigos cercanos (no tanques) para el juggle.', cd: 4, cast() {
-    for (const e of G.enemies) if (e.type !== 'T' && Math.hypot(e.x - P.x, e.y - P.y) < 150) { e.vy = -800; e.stun = 1.5; }
+    for (const e of G.enemies) if (e.type !== 'T' && !e.boss && Math.hypot(e.x - P.x, e.y - P.y) < 150) { e.vy = -800; e.stun = 1.5; }
     endHover(); P.vy = Math.min(P.vy, -600);
     fx('ring', {x: P.x, y: P.y, r: 150, c: C.paper});
   }},
@@ -246,25 +278,43 @@ const CARDS = {
   estela: {n: 'Estela', d: 'Tu estela mata durante 2 s.', cd: 6, cast() { P.trailT = 2; }},
   bala: {n: 'Tiempo bala', d: 'Todo al 25 % durante 1.5 s reales.', cd: 8, cast() { G.slow = 1.5; }},
 };
+// pasivas: 1 ranura opcional; cada una cambia los números de la barra con un trade-off (a futuro se desbloquean con logros)
+const MODS = {barMax: 1, killRefill: 1, launchCost: 1, launchPow: 1, hoverMax: 1, hoverLaunch: 1, styleDecay: 1, orbRefill: 1, orbHeal: 0};
+const PASSIVES = {
+  tanque: {n: 'Tanque grande', d: '+50 % de barra, pero los kills recargan la mitad.', m: {barMax: 1.5, killRefill: .5}},
+  tacano: {n: 'Tacaño', d: 'Lanzarte cuesta −30 %, pero la potencia máxima baja 15 %.', m: {launchCost: .7, launchPow: .85}},
+  planeador: {n: 'Planeador', d: 'Hover de hasta 4 s, pero lanzarte desde el hover cuesta el doble.', m: {hoverMax: 2, hoverLaunch: 2}},
+  adrenalina: {n: 'Adrenalina', d: 'Los kills recargan el doble, pero el estilo decae el doble de rápido.', m: {killRefill: 2, styleDecay: 2}},
+  ancla: {n: 'Ancla', d: 'Los orbes curan 1 de vida, pero ya no recargan barra.', m: {orbRefill: 0, orbHeal: 1}},
+};
 
 // ---------- estado ----------
 const $ = s => document.querySelector(s);
 const cv = $('#c');
 const COARSE = matchMedia('(pointer:coarse)').matches;
-let state = 'menu', G = null, P = null, hand = [], lastCard = 0, level = 1, seed = 0, score = 0;
+let state = 'menu', G = null, P = null, M = MODS, hand = [], lastCard = 0, level = 1, seed = 0, score = 0;
 let cam = {x: 0, y: 0, z: 1}, dpr = 1, SAFE = {l: 0, r: 0, b: 0};
 const load = (k, d) => { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch { return d; } };
 const save = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} };
 let build = load('inercia.build', ['gancho', 'spray', 'bala']).filter(id => CARDS[id]);
+let passive = load('inercia.passive', null);
+if (!PASSIVES[passive]) passive = null;
 CFG.inverted = load('inercia.inv', true);
 
 function world(sd, lv) {
+  M = {...MODS, ...PASSIVES[passive]?.m};
   const L = genLevel(sd, lv);
-  G = {...L, shots: [], splats: [], fx: [], time: 0, combo: 0, comboT: 0, shake: 0, kills: 0, slow: 0, ab: 0, glitch: 0};
-  P = {x: L.start.x, y: L.start.y - 13.01, vx: 0, vy: 0, r: 13, hp: 3, charges: CFG.charges, hoverReady: true, hovering: false, hoverT: 0, stored: 0,
+  G = {...L, shots: [], splats: [], fx: [], time: 0, combo: 0, comboT: 0, shake: 0, kills: 0, slow: 0, ab: 0, glitch: 0, style: 0, cannon: true};
+  P = {x: L.start.x, y: L.start.y - 13.01, vx: 0, vy: 0, r: 13, hp: 3, bar: barMax(), cold: 0, hovering: false, hoverT: 0, stored: 0,
        grounded: false, inv: 0, parry: 0, ricochet: 0, trailT: 0, pound: false, pu: {turbo: 0, inf: 0, shield: 0}, trail: []};
-  P.safe = {x: P.x, y: P.y};
 }
+// barra y estilo
+const RANKS = 'DCBAS';
+const rank = () => Math.min(4, Math.floor(G.style / 100));
+const boost = () => 1 + rank() * CFG.rankSpeed;
+const barMax = () => CFG.bar * M.barMax;
+const addBar = v => { P.bar = Math.min(barMax(), P.bar + v); };
+const addStyle = v => { G.style = Math.max(0, Math.min(499, G.style + v)); };
 function startLevel() {
   world(seed, level);
   hand = build.map(id => ({id, cd: 0})); lastCard = 0;
@@ -274,7 +324,7 @@ function startLevel() {
 }
 
 // ---------- física ----------
-const tileAt = (tx, ty) => tx < 0 || tx >= G.W ? '#' : ty < 0 || ty >= H ? '.' : G.grid[ty][tx];
+const tileAt = (tx, ty) => tx < 0 || tx >= G.W || ty < 0 || ty >= G.H ? '#' : G.grid[ty][tx];
 const solid = c => c === '#' || c === 'B';
 const norm = (x, y) => { const l = Math.hypot(x, y) || 1; return {x: x / l, y: y / l}; };
 
@@ -307,6 +357,7 @@ function playerHit(p, c, ax) {
     if (s > 900) splat(p.x, p.y + p.r, 6 + s / 150, C.yellow);
     p.vy = 0; p.grounded = true;
   } else if (s > 300) { // pared o techo con rebote
+    if (s > 900) addStyle(6);
     if (s > 500) splat(p.x + (ax ? Math.sign(v) * p.r : 0), p.y + (ax ? 0 : Math.sign(v) * p.r), 6 + s / 120, C.yellow);
     if (ax) p.vx = -v * rest; else p.vy = -v * rest;
     bounce();
@@ -316,27 +367,37 @@ const walkHit = (e, c, ax) => { if (ax) { e.vx = 0; e.dir *= -1; } else { if (e.
 const flyHit = (e, c, ax) => { if (ax) e.vx *= -.5; else e.vy *= -.5; };
 
 // ---------- acciones ----------
+// la potencia queda limitada por la barra que queda; el cañón de inicio sale gratis y a tope
 function launchVec(dx, dy) {
   const len = Math.hypot(dx, dy);
-  if (len < 12 || (!P.grounded && P.charges <= 0 && !(P.pu.inf > 0))) return null;
-  const s = CFG.inverted ? -1 : 1, pw = Math.min(len, CFG.maxDrag) / CFG.maxDrag * CFG.launchMax * (P.pu.turbo > 0 ? 1.3 : 1);
-  const m = Math.max(pw, (P.hovering ? P.stored : Math.hypot(P.vx, P.vy)) * CFG.keepMomentum);
-  return {vx: s * dx / len * m, vy: s * dy / len * m};
+  if (len < 12) return null;
+  const s = CFG.inverted ? -1 : 1, top = CFG.launchMax * M.launchPow * boost() * (P.pu.turbo > 0 ? 1.3 : 1);
+  if (G.cannon) return {vx: s * dx / len * top, vy: s * dy / len * top, cost: 0};
+  let f = Math.min(len, CFG.maxDrag) / CFG.maxDrag, cost = 0;
+  if (!(P.pu.inf > 0)) {
+    const k = M.launchCost * (P.hovering ? M.hoverLaunch : 1), base = CFG.launchBase * k, pow = CFG.launchPow * k;
+    if (P.bar < base) return null;
+    f = Math.min(f, (P.bar - base) / pow); cost = base + pow * f;
+  }
+  const m = Math.max(f * top, (P.hovering ? P.stored : Math.hypot(P.vx, P.vy)) * CFG.keepMomentum);
+  return {vx: s * dx / len * m, vy: s * dy / len * m, cost};
 }
 function launch(dx, dy) {
   const v = launchVec(dx, dy);
   if (!v) return;
-  if (!P.grounded && !(P.pu.inf > 0)) P.charges--;
+  P.bar -= v.cost; G.cannon = false;
   P.vx = v.vx; P.vy = v.vy; P.pound = false; endHover();
 }
 function jump() {
+  if (G.cannon) return;
   if (P.grounded) { P.vy = -CFG.jump; return; }
   const ty = Math.floor(P.y / T), side = solid(tileAt(Math.floor((P.x + P.r + 3) / T), ty)) ? 1 : solid(tileAt(Math.floor((P.x - P.r - 3) / T), ty)) ? -1 : 0;
   if (side) { P.vx = -side * 520; P.vy = -CFG.jump; endHover(); }
 }
 function startAim() {
-  if (P.grounded || !P.hoverReady || P.hovering) return;
-  P.hovering = true; P.hoverReady = false; P.hoverT = 0; P.stored = Math.hypot(P.vx, P.vy); P.vx = P.vy = 0;
+  if (G.cannon || P.grounded || P.hovering || !(P.bar >= 4 || P.pu.inf > 0)) return;
+  if (!(P.pu.inf > 0)) P.bar -= 4;
+  P.hovering = true; P.hoverT = 0; P.stored = Math.hypot(P.vx, P.vy); P.vx = P.vy = 0;
 }
 const endHover = () => { P.hovering = false; };
 function defaultAim() {
@@ -346,31 +407,45 @@ function defaultAim() {
 }
 function castCard(i, dir) {
   const c = hand[i];
-  if (!c || c.cd > 0) return;
+  if (!c || c.cd > 0 || G.cannon) return;
   const d = CARDS[c.id];
   if (d.aim && !dir) dir = defaultAim();
   if (d.cast(dir?.x, dir?.y) === false) return;
+  addStyle(i !== lastCard ? 12 : 4); // variar cartas da más estilo
   c.cd = d.cd; lastCard = i;
+}
+// golpe letal: los mini-jefes aguantan varios
+function strike(e) {
+  if (e.dead || e.iframe > 0) return false;
+  if (e.hp > 1) {
+    e.hp--; e.iframe = .5; e.stun = .6; G.shake = .15; G.ab = 3; addStyle(25);
+    fx('ring', {x: e.x, y: e.y, r: e.r + 20, c: C.paper});
+    return true;
+  }
+  kill(e); return true;
 }
 function kill(e) {
   if (e.dead) return;
-  e.dead = true; G.kills++; G.combo++; G.comboT = 2.5; score += 100 * G.combo;
-  P.charges = CFG.charges; P.hoverReady = true; G.shake = Math.max(G.shake, .12); G.ab = Math.max(G.ab, 2.5);
+  e.dead = true; G.kills++; G.combo++; G.comboT = 2.5; score += 100 * G.combo * (e.boss ? 5 : 1);
+  addStyle(40 + (P.grounded ? 0 : 20) + Math.min(5, G.combo) * 8 + (e.boss ? 150 : 0));
+  addBar(barMax() * CFG.rankRefill[rank()] * M.killRefill);
+  if (e.core) { e.core.shield = false; fx('ring', {x: e.core.x, y: e.core.y, r: 60, c: C.blue}); }
+  G.shake = Math.max(G.shake, .12); G.ab = Math.max(G.ab, 2.5);
   for (let i = 0; i < 6; i++) splat(e.x + (Math.random() - .5) * e.r * 3, e.y + (Math.random() - .5) * e.r * 3, 4 + Math.random() * e.r * .7, i % 2 ? C.red : C.yellow);
 }
 function shock(x, y, r) {
-  for (const e of G.enemies) if (Math.hypot(e.x - x, e.y - y) < r + e.r) kill(e);
+  for (const e of G.enemies) if (Math.hypot(e.x - x, e.y - y) < r + e.r) strike(e);
   fx('ring', {x, y, r, c: C.yellow}); G.shake = .25; G.ab = 3.5;
   for (let i = 0; i < 8; i++) splat(x + (Math.random() - .5) * r * 1.4, y + (Math.random() - .5) * 10, 5 + Math.random() * 9, C.yellow);
 }
 function parryOk() {
-  P.parry = 0; P.inv = .5; P.charges = CFG.charges; P.hoverReady = true;
+  P.parry = 0; P.inv = .5; addBar(barMax()); addStyle(100);
   for (const c of hand) c.cd = 0;
   fx('ring', {x: P.x, y: P.y, r: 60, c: C.paper});
 }
 function hurt(sx, sy, force) {
   if (!force && (P.inv > 0 || P.pu.shield > 0)) return;
-  P.hp--; P.inv = 1.2; G.combo = 0; G.shake = .3; G.ab = 6; G.glitch = .4;
+  P.hp--; P.inv = 1.2; G.combo = 0; addStyle(-120); G.shake = .3; G.ab = 6; G.glitch = .4;
   P.vx = (Math.sign(P.x - sx) || 1) * 420; P.vy = -520; endHover();
   if (P.hp <= 0) gameOver();
 }
@@ -384,26 +459,44 @@ function update(dt) {
   for (const k of ['inv', 'parry', 'ricochet', 'trailT']) P[k] = Math.max(0, P[k] - dt);
   for (const c of hand) c.cd = Math.max(0, c.cd - dt);
   if ((G.comboT -= dt) <= 0) G.combo = 0;
+  addStyle(-CFG.styleDecay * M.styleDecay * dt);
 
-  // jugador
-  const gs = P.hovering ? Math.min(1, (P.hoverT += dt) / CFG.hoverFade) : 1;
+  // jugador; el hover gasta barra cada vez más rápido y se corta en hoverMax
+  let gs = 1;
+  if (P.hovering) {
+    const max = CFG.hoverMax * M.hoverMax;
+    P.hoverT += dt;
+    if (!(P.pu.inf > 0)) P.bar = Math.max(0, P.bar - CFG.hoverCost * (1 + P.hoverT / max) * dt);
+    if (P.hoverT >= max || P.bar <= 0) endHover(); else gs = P.hoverT / max;
+  }
   if (P.grounded) P.vx *= Math.exp(-5 * dt);
   move(P, dt, gs, playerHit);
-  const sp = Math.hypot(P.vx, P.vy);
-  if (sp > CFG.maxSpeed) { P.vx *= CFG.maxSpeed / sp; P.vy *= CFG.maxSpeed / sp; }
-  if (P.grounded) { P.charges = CFG.charges; P.hoverReady = true; P.safe = {x: P.x, y: P.y}; }
+  let sp = Math.hypot(P.vx, P.vy);
+  const vmax = CFG.maxSpeed * boost();
+  if (sp > vmax) { P.vx *= vmax / sp; P.vy *= vmax / sp; sp = vmax; }
   P.trail.push({x: P.x, y: P.y, t: .45, k: P.trailT > 0});
   P.trail = P.trail.filter(p => (p.t -= dt) > 0);
   if ([-P.r + 2, P.r - 2].some(ox => { const y = P.y + P.r - 1; return tileAt(Math.floor((P.x + ox) / T), Math.floor(y / T)) === '^' && y % T > T / 2; })) hurt(P.x, P.y + T);
-  if (P.y > H * T + 300) { hurt(P.x, P.y, true); Object.assign(P, P.safe, {vx: 0, vy: 0}); }
+  // move or die: ir lento te enfría; el hover lo pausa
+  if (sp < CFG.coldSpeed) { if (!P.hovering) P.cold += dt / CFG.coldTime; }
+  else P.cold = Math.max(0, P.cold - dt * 2 / CFG.coldTime);
+  if (P.cold >= 1) { P.cold = 0; addBar(CFG.coldRefill); fx('ring', {x: P.x, y: P.y, r: 50, c: C.blue}); hurt(P.x, P.y + 10); }
   if (state !== 'play') return;
 
   // enemigos
   for (const e of G.enemies) {
-    for (const k of ['stun', 'mark', 'slow']) e[k] = Math.max(0, e[k] - dt);
+    for (const k of ['stun', 'mark', 'slow', 'iframe']) e[k] = Math.max(0, e[k] - dt);
     const sm = e.slow > 0 ? .3 : 1;
     let dx = P.x - e.x, dy = P.y - e.y, d = Math.hypot(dx, dy) || 1;
-    if (e.type === 'F') {
+    if (e.boss) { // persigue si te acercás a su núcleo; si no, lo orbita
+      const c = e.core, a = G.time * 1.2 + e.x * .001;
+      const chase = e.stun <= 0 && Math.hypot(P.x - c.x, P.y - c.y) < 480;
+      const gx = chase ? P.x : c.x + Math.cos(a) * 90, gy = chase ? P.y : c.y + Math.sin(a) * 90;
+      const g = norm(gx - e.x, gy - e.y), v = (chase ? 230 : 160) * sm;
+      if (e.stun > 0) e.vy += CFG.gravity * .3 * dt;
+      else { e.vx += (g.x * v - e.vx) * 3 * dt; e.vy += (g.y * v - e.vy) * 3 * dt; }
+      move(e, dt, 0, flyHit);
+    } else if (e.type === 'F') {
       if (e.stun <= 0 && d < 520) { e.vx += (dx / d * 130 * sm - e.vx) * 2 * dt; e.vy += (dy / d * 130 * sm - e.vy) * 2 * dt; }
       else if (e.stun > 0) e.vy += CFG.gravity * .5 * dt;
       else { e.vx *= .98; e.vy = Math.sin(G.time * 2 + e.x) * 30; }
@@ -417,24 +510,49 @@ function update(dt) {
       if (e.type === 'S' && e.stun <= 0 && d < 650 && (e.cd -= dt * sm) <= 0) { e.cd = 2.2; G.shots.push({x: e.x, y: e.y, vx: dx / d * 380, vy: dy / d * 380, t: 4}); }
     }
     if (Math.hypot(P.x - e.x, P.y - e.y) < P.r + e.r) {
-      const lethal = P.parry > 0 || P.pu.shield > 0 || sp >= (e.type === 'T' ? CFG.tankSpeed : CFG.killSpeed) || (e.type !== 'T' && (e.stun > 0 || e.mark > 0));
-      if (lethal) { if (P.parry > 0) parryOk(); kill(e); P.vx *= .9; P.vy *= .9; } else hurt(e.x, e.y);
+      const tough = e.type === 'T' || e.boss;
+      const lethal = P.parry > 0 || P.pu.shield > 0 || sp >= (tough ? CFG.tankSpeed : CFG.killSpeed) || (!tough && (e.stun > 0 || e.mark > 0));
+      if (lethal) {
+        if (P.parry > 0) parryOk();
+        strike(e);
+        if (e.dead) { P.vx *= .9; P.vy *= .9; }
+        else { const n = norm(P.x - e.x, P.y - e.y), s = sp * .6; P.vx = n.x * s; P.vy = n.y * s; } // rebote contra el jefe
+      } else if (!(e.iframe > 0)) hurt(e.x, e.y);
     }
-    if (P.trail.some(p => p.k && Math.hypot(p.x - e.x, p.y - e.y) < e.r + 10)) kill(e);
-    if (e.y > H * T + 300) e.dead = true;
+    if (P.trail.some(p => p.k && Math.hypot(p.x - e.x, p.y - e.y) < e.r + 10)) strike(e);
   }
   G.enemies = G.enemies.filter(e => !e.dead);
 
-  // proyectiles
+  // proyectiles; esquivarlos de cerca da estilo
   for (const s of G.shots) {
     s.x += s.vx * dt; s.y += s.vy * dt; s.t -= dt;
     if (solid(tileAt(Math.floor(s.x / T), Math.floor(s.y / T)))) s.t = 0;
-    if (Math.hypot(s.x - P.x, s.y - P.y) < P.r + 5) { s.t = 0; if (P.parry > 0) parryOk(); else hurt(s.x, s.y); }
+    const d = Math.hypot(s.x - P.x, s.y - P.y);
+    if (d < P.r + 5) { s.t = 0; if (P.parry > 0) parryOk(); else hurt(s.x, s.y); }
+    else if (d < P.r + 30 && !s.near) { s.near = true; addStyle(15); }
   }
   G.shots = G.shots.filter(s => s.t > 0);
 
-  for (const u of G.pups) if (!u.got && Math.hypot(u.x - P.x, u.y - P.y) < P.r + 16) { u.got = true; P.pu[u.type] = {turbo: 8, inf: 5, shield: 6}[u.type]; }
-  if (state === 'play' && Math.hypot(P.x - G.goal.x, P.y - (G.goal.y - 40)) < 55) win();
+  // orbes: recargan barra y se rompen al tocarlos
+  for (const o of G.orbs) if (!o.got && Math.hypot(o.x - P.x, o.y - P.y) < P.r + 14) {
+    o.got = true; addBar(CFG.orbRefill * M.orbRefill); addStyle(10);
+    if (M.orbHeal) P.hp = Math.min(3, P.hp + M.orbHeal);
+    if (o.pu) P.pu[o.pu] = {turbo: 8, inf: 5, shield: 6}[o.pu];
+    fx('ring', {x: o.x, y: o.y, r: 26, c: o.pu ? C.yellow : C.teal});
+  }
+  // núcleos: se rompen chocándolos rápido; lento, rebotás
+  for (const c of G.cores) if (!c.dead && Math.hypot(c.x - P.x, c.y - P.y) < P.r + c.r) {
+    if (!c.shield && (sp >= CFG.killSpeed || P.parry > 0 || P.pu.shield > 0)) {
+      c.dead = true; score += 500; addStyle(80); addBar(barMax()); G.shake = .3; G.ab = 5;
+      fx('ring', {x: c.x, y: c.y, r: 90, c: C.yellow});
+      for (let i = 0; i < 10; i++) splat(c.x + (Math.random() - .5) * 90, c.y + (Math.random() - .5) * 90, 5 + Math.random() * 12, i % 2 ? C.yellow : C.paper);
+    } else {
+      const n = norm(P.x - c.x, P.y - c.y), vn = P.vx * n.x + P.vy * n.y;
+      P.x = c.x + n.x * (P.r + c.r); P.y = c.y + n.y * (P.r + c.r);
+      if (vn < 0) { P.vx -= 1.6 * vn * n.x; P.vy -= 1.6 * vn * n.y; }
+    }
+  }
+  if (state === 'play' && G.cores.every(c => c.dead)) win();
 }
 
 // ---------- input: pointer events (touch + mouse) y teclado ----------
@@ -576,10 +694,10 @@ function cardRects() {
 // ciudad de fondo: siluetas contra el horizonte (sin detalles chicos: la aberración los vuelve confeti); f = factor de parallax
 function skyline(list, f, col, rim) {
   const w = innerWidth, h = innerHeight, l = cam.x * f - w / cam.z, r = cam.x * f + w / cam.z;
-  setT(cam.z, w / 2 - cam.x * f * cam.z, h / 2 - (cam.y * f + H * T * (1 - f)) * cam.z);
+  setT(cam.z, w / 2 - cam.x * f * cam.z, h / 2 - (cam.y * f + G.H * T * (1 - f)) * cam.z);
   list.forEach((b, i) => {
     if (b.x > r || b.x + b.w < l) return;
-    const top = H * T - b.h;
+    const top = G.H * T - b.h;
     ctx.fillStyle = col; ctx.fillRect(b.x, top, b.w, b.h + 400);
     if (rim) { ctx.fillStyle = rim; ctx.fillRect(b.x, top, b.w, ART); ctx.fillRect(b.x + b.w - ART, top, ART, b.h); }
   });
@@ -594,7 +712,9 @@ function render(rdt) {
   cam.z += (zt - cam.z) * Math.min(1, rdt * 3);
   const vw = w / cam.z, vh = h / cam.z;
   // la cámara deja al jugador arriba-izquierda para que la fila de cartas no tape la acción (D-04)
-  const tx = P.x + P.vx * .18 + vw * .12, ty = Math.min(P.y + P.vy * .08 + vh * .08, H * T - vh / 2 + 120);
+  // y no se sale del mapa (si el mapa es más chico que la vista, lo centra)
+  const clampTo = (v, size, lim) => size >= lim ? lim / 2 : Math.max(size / 2, Math.min(lim - size / 2, v));
+  const tx = clampTo(P.x + P.vx * .18 + vw * .12, vw, G.W * T), ty = clampTo(P.y + P.vy * .08 + vh * .08, vh, G.H * T);
   cam.x += (tx - cam.x) * Math.min(1, rdt * 6); cam.y += (ty - cam.y) * Math.min(1, rdt * 6);
   let ox = 0, oy = 0;
   if (G.shake > 0) { G.shake -= rdt; ox = (Math.random() - .5) * 12; oy = (Math.random() - .5) * 12; }
@@ -602,14 +722,15 @@ function render(rdt) {
   ctx = bctx; sc = k;
   setT(1, 0, 0); ctx.fillStyle = C.night; ctx.fillRect(0, 0, w, h);
   // cielo en bandas que se calientan hacia el horizonte
-  setT(cam.z, w / 2 - cam.x * .25 * cam.z, h / 2 - (cam.y * .25 + H * T * .75) * cam.z);
-  SKY.forEach((col, i) => { ctx.fillStyle = col; ctx.fillRect(cam.x * .25 - w / cam.z, H * T - (SKY.length - i) * 55, w * 2 / cam.z, i === SKY.length - 1 ? 2000 : 56); });
+  setT(cam.z, w / 2 - cam.x * .25 * cam.z, h / 2 - (cam.y * .25 + G.H * T * .75) * cam.z);
+  SKY.forEach((col, i) => { ctx.fillStyle = col; ctx.fillRect(cam.x * .25 - w / cam.z, G.H * T - (SKY.length - i) * 55, w * 2 / cam.z, i === SKY.length - 1 ? 2000 : 56); });
   skyline(G.far, .25, C.far);
   skyline(G.bg, .5, C.bg, C.win);
 
   setT(cam.z, w / 2 - cam.x * cam.z + ox, h / 2 - cam.y * cam.z + oy);
   const x0 = Math.max(0, Math.floor((cam.x - vw / 2) / T) - 1), x1 = Math.min(G.W - 1, Math.ceil((cam.x + vw / 2) / T) + 1);
-  for (let y = 0; y < H; y++) for (let x = x0; x <= x1; x++) {
+  const y0 = Math.max(0, Math.floor((cam.y - vh / 2) / T) - 1), y1 = Math.min(G.H - 1, Math.ceil((cam.y + vh / 2) / T) + 1);
+  for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
     const c = G.grid[y][x], px = x * T, py = y * T;
     if (c === '#') {
       ctx.fillStyle = C.concrete; ctx.fillRect(px, py, T + .5, T + .5);
@@ -631,28 +752,47 @@ function render(rdt) {
   for (const s of G.splats) { ctx.fillStyle = s.c; circle(s.x, s.y, s.r); ctx.fill(); }
   ctx.globalAlpha = 1;
 
-  // meta: bandera a cuadros
-  const gx = G.goal.x, gy = G.goal.y;
-  ctx.fillStyle = C.paper; ctx.fillRect(gx - 2.5, gy - 95, 5, 95);
-  ctx.fillStyle = C.yellow; ctx.fillRect(gx - 5, gy - 102, 10, 10);
-  for (let i = 0; i < 4; i++) for (let j = 0; j < 3; j++) {
-    ctx.fillStyle = (i + j) % 2 ? C.ink : C.paper;
-    ctx.fillRect(gx + 2.5 + i * 10, gy - 90 + j * 10 + Math.sin(G.time * 6 - i) * i, 10, 10);
+  // cañón de inicio: apunta hacia donde vas a salir
+  if (G.cannon && !G.demo) {
+    const sl = [...ptrs.values()].find(p => p.kind === 'sling' && p.moved), v = sl && launchVec(sl.x - sl.sx, sl.y - sl.sy);
+    const a = v ? Math.atan2(v.vy, v.vx) : -Math.PI / 4;
+    ctx.save(); ctx.translate(P.x, P.y); ctx.rotate(a);
+    ctx.fillStyle = C.red; ctx.fillRect(-10, -18, 52, 36); ctx.fillStyle = C.paper; ctx.fillRect(36, -18, 8, 36);
+    ctx.restore();
+    ctx.fillStyle = C.concrete; ctx.fillRect(P.x - 22, P.y + 6, 44, 20); ctx.fillStyle = C.edge; ctx.fillRect(P.x - 22, P.y + 6, 44, ART);
   }
 
-  // power-ups
-  for (const u of G.pups) if (!u.got) {
-    const col = {turbo: C.teal, inf: C.yellow, shield: C.blue}[u.type], yy = u.y + Math.sin(G.time * 3 + u.x) * 4;
-    ctx.save(); ctx.translate(u.x, yy); ctx.rotate(Math.PI / 4 + Math.round(G.time * 4) * Math.PI / 8);
-    ctx.fillStyle = C.paper; ctx.fillRect(-13, -13, 26, 26); ctx.fillStyle = col; ctx.fillRect(-10, -10, 20, 20); ctx.fillStyle = C.ink; ctx.fillRect(-3.75, -3.75, 7.5, 7.5);
+  // núcleos: el objetivo del nivel; con escudo mientras viva su mini-jefe
+  for (const c of G.cores) if (!c.dead) {
+    ctx.save(); ctx.translate(c.x, c.y); ctx.rotate(Math.round(G.time * 3) * Math.PI / 8);
+    ctx.fillStyle = C.red; ctx.fillRect(-c.r - 3, -c.r, c.r * 2, c.r * 2);
+    ctx.fillStyle = C.yellow; ctx.fillRect(-c.r, -c.r, c.r * 2, c.r * 2);
+    ctx.fillStyle = C.ink; ctx.fillRect(-c.r * .45, -c.r * .45, c.r * .9, c.r * .9);
+    ctx.fillStyle = C.paper; ctx.fillRect(-2.5, -2.5, 5, 5);
     ctx.restore();
+    if (c.shield) { ctx.strokeStyle = C.blue; ctx.lineWidth = 5; ctx.setLineDash([10, 7.5]); ctx.lineDashOffset = G.time * 30; circle(c.x, c.y, c.r + 16); ctx.stroke(); ctx.setLineDash([]); }
+  }
+
+  // orbes: teal = barra; los especiales traen power-up
+  for (const o of G.orbs) if (!o.got) {
+    const yy = o.y + Math.sin(G.time * 3 + o.x) * 4;
+    if (o.pu) {
+      const col = {turbo: C.teal, inf: C.yellow, shield: C.blue}[o.pu];
+      ctx.save(); ctx.translate(o.x, yy); ctx.rotate(Math.PI / 4 + Math.round(G.time * 4) * Math.PI / 8);
+      ctx.fillStyle = C.paper; ctx.fillRect(-13, -13, 26, 26); ctx.fillStyle = col; ctx.fillRect(-10, -10, 20, 20); ctx.fillStyle = C.ink; ctx.fillRect(-3.75, -3.75, 7.5, 7.5);
+      ctx.restore();
+    } else {
+      ctx.fillStyle = C.paper; circle(o.x, yy, 11); ctx.fill();
+      ctx.fillStyle = C.teal; circle(o.x, yy, 8); ctx.fill();
+      ctx.fillStyle = C.paper; ctx.fillRect(o.x - 5, yy - 5, ART, ART);
+    }
   }
 
   // enemigos
   for (const e of G.enemies) {
     ctx.save(); ctx.translate(e.x, e.y);
     if (e.stun > 0) ctx.rotate(Math.sin(G.time * 30) * .3);
-    ctx.fillStyle = e.slow > 0 ? C.slowed : C.red;
+    ctx.fillStyle = e.slow > 0 ? C.slowed : e.iframe > 0 ? C.paper : C.red;
     if (e.type === 'F') { const a = Math.atan2(P.y - e.y, P.x - e.x); ctx.rotate(a); ctx.beginPath(); ctx.moveTo(e.r * 1.3, 0); ctx.lineTo(-e.r, -e.r); ctx.lineTo(-e.r, e.r); ctx.fill(); ctx.fillStyle = C.ink; ctx.fillRect(0, -2.5, 5, 5); }
     else if (e.type === 'S') { circle(0, 0, e.r); ctx.fill(); const a = Math.atan2(P.y - e.y, P.x - e.x); ctx.strokeStyle = C.red; ctx.lineWidth = 7.5; ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(Math.cos(a) * 26, Math.sin(a) * 26); ctx.stroke(); ctx.fillStyle = C.ink; ctx.fillRect(-2.5, -2.5, 5, 5); }
     else {
@@ -662,6 +802,10 @@ function render(rdt) {
     }
     if (e.type !== 'F' && e.type !== 'S') { ctx.fillStyle = C.ink; ctx.fillRect(e.dir * 4 - 7.5, -e.r * .4, 5, 7.5); ctx.fillRect(e.dir * 4 + 2.5, -e.r * .4, 5, 7.5); }
     ctx.restore();
+    if (e.boss) {
+      ctx.strokeStyle = C.paper; ctx.lineWidth = 2.5; circle(e.x, e.y, e.r + 7.5); ctx.stroke();
+      for (let i = 0; i < 3; i++) { ctx.fillStyle = i < e.hp ? C.yellow : C.dim; ctx.fillRect(e.x - 20 + i * 15, e.y - e.r - 20, 10, 7.5); }
+    }
     if (e.mark > 0) { ctx.strokeStyle = C.yellow; ctx.lineWidth = 2.5; ctx.setLineDash([5, 5]); circle(e.x, e.y, e.r + 7.5); ctx.stroke(); ctx.setLineDash([]); }
   }
   for (const s of G.shots) { ctx.fillStyle = C.red; circle(s.x, s.y, 7.5); ctx.fill(); ctx.fillStyle = C.paper; ctx.fillRect(s.x - 2.5, s.y - 2.5, 5, 5); }
@@ -685,9 +829,10 @@ function render(rdt) {
     ctx.lineWidth = 2.5;
     if (sp >= CFG.killSpeed) { ctx.strokeStyle = C.paper; circle(P.x, P.y, P.r + 6); ctx.stroke(); }
     if (sp >= CFG.tankSpeed) { circle(P.x, P.y, P.r + 11); ctx.stroke(); }
+    if (P.cold > .3) { ctx.globalAlpha = P.cold; ctx.strokeStyle = C.blueHi; ctx.lineWidth = 2.5; ctx.setLineDash([5, 5]); circle(P.x, P.y, P.r + 4 + (1 - P.cold) * 20); ctx.stroke(); ctx.setLineDash([]); ctx.globalAlpha = 1; }
     if (P.pu.shield > 0) { ctx.strokeStyle = C.blue; ctx.lineWidth = 5; circle(P.x, P.y, P.r + 16); ctx.stroke(); }
     if (P.parry > 0) { ctx.strokeStyle = C.paper; ctx.lineWidth = 5; circle(P.x, P.y, P.r + 20); ctx.stroke(); }
-    if (P.hovering) { ctx.strokeStyle = C.blue; ctx.lineWidth = 5; ctx.beginPath(); ctx.arc(P.x, P.y, P.r + 6, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * (1 - Math.min(1, P.hoverT / CFG.hoverFade))); ctx.stroke(); }
+    if (P.hovering) { ctx.strokeStyle = C.blue; ctx.lineWidth = 5; ctx.beginPath(); ctx.arc(P.x, P.y, P.r + 6, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * (1 - Math.min(1, P.hoverT / (CFG.hoverMax * M.hoverMax)))); ctx.stroke(); }
   }
 
   // efectos
@@ -743,17 +888,41 @@ function hud(sp) {
     if (on) { ctx.fillStyle = C.teal; ctx.fillRect(x + 3, top + 3, 18, 18); }
     ctx.fillStyle = on ? C.red : C.dim; ctx.fillRect(x, top, 18, 18);
   }
-  for (let i = 0; i < CFG.charges; i++) {
-    const x = L + i * 26, y = top + 28;
-    ctx.fillStyle = P.pu.inf > 0 || P.grounded || i < P.charges ? C.yellow : C.dim;
-    ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + 18, y + 9); ctx.lineTo(x, y + 18); ctx.fill();
-  }
-  ctx.fillStyle = P.hoverReady || P.hovering ? C.blue : C.dim; ctx.fillRect(L + CFG.charges * 26 + 2, top + 31, 12, 12);
-  let y = top + 56;
+  // barra de movimiento; al apuntar, el tramo que vas a gastar se marca en tomate
+  const bm = barMax(), bw0 = Math.min(220, w * .2) * M.barMax ** .5, by0 = top + 28;
+  const sl = [...ptrs.values()].find(p => p.kind === 'sling' && p.moved), cost = sl ? launchVec(sl.x - sl.sx, sl.y - sl.sy)?.cost || 0 : 0;
+  ctx.fillStyle = C.ink; ctx.fillRect(L - 2, by0 - 2, bw0 + 4, 18);
+  ctx.fillStyle = C.dim; ctx.fillRect(L, by0, bw0, 14);
+  ctx.fillStyle = P.pu.inf > 0 ? C.teal : C.yellow; ctx.fillRect(L, by0, bw0 * P.bar / bm, 14);
+  if (cost) { ctx.fillStyle = C.red; ctx.fillRect(L + bw0 * (P.bar - cost) / bm, by0, bw0 * cost / bm, 14); }
+  ctx.fillStyle = C.ink; for (let i = 1; i < bm / 25; i++) ctx.fillRect(L + bw0 * i * 25 / bm - 1, by0, 2, 14);
+  // frío: se llena si vas lento
+  if (P.cold > 0) { ctx.fillStyle = C.blueHi; ctx.fillRect(L, by0 + 18, bw0 * P.cold, 5); }
+  let y = top + 58;
+  // estilo: rango y progreso al siguiente
+  const rk = rank();
+  ctx.font = JF(56); ink(RANKS[rk], L, y - 4, rk >= 3 ? C.yellow : C.paper, rk >= 3 ? 3 : 1.5);
+  ctx.fillStyle = C.dim; ctx.fillRect(L + 34, y + 30, 80, 6);
+  ctx.fillStyle = C.paper; ctx.fillRect(L + 34, y + 30, 80 * (rk === 4 ? 1 : G.style % 100 / 100), 6);
+  if (G.combo > 1) { ctx.font = JF(40); ink(`x${G.combo}`, L + 34, y - 6, C.yellow, 2); }
+  y += 50;
   ctx.font = JF(22);
-  for (const k in P.pu) if (P.pu[k] > 0) { ink(`${{turbo: 'TURBO', inf: 'LANZAMIENTOS ∞', shield: 'ESCUDO'}[k]} ${P.pu[k].toFixed(1)}`, L, y, C.paper, 1); y += 22; }
+  for (const k in P.pu) if (P.pu[k] > 0) { ink(`${{turbo: 'TURBO', inf: 'BARRA CONGELADA', shield: 'ESCUDO'}[k]} ${P.pu[k].toFixed(1)}`, L, y, C.paper, 1); y += 22; }
   if (P.ricochet > 0) { ink('RICOCHET LISTO', L, y, C.paper, 1); y += 22; }
-  if (G.combo > 1) { ctx.font = JF(64); ink(`x${G.combo}`, L, y, C.yellow, 3); }
+
+  // flecha al núcleo más cercano si está fuera de cámara
+  let nc = null, nd = Infinity;
+  for (const c of G.cores) if (!c.dead) { const d = Math.hypot(c.x - P.x, c.y - P.y); if (d < nd) { nd = d; nc = c; } }
+  if (nc) {
+    const sx = (nc.x - cam.x) * cam.z + w / 2, sy = (nc.y - cam.y) * cam.z + h / 2, m = 44;
+    if (sx < 0 || sx > w || sy < 0 || sy > h) {
+      const a = Math.atan2(sy - h / 2, sx - w / 2), ax = Math.max(m, Math.min(w - m, sx)), ay = Math.max(m + 40, Math.min(h - m, sy));
+      ctx.save(); ctx.translate(ax, ay); ctx.rotate(a);
+      ctx.fillStyle = C.red; ctx.beginPath(); ctx.moveTo(16, 3); ctx.lineTo(-10, -11); ctx.lineTo(-10, 17); ctx.fill();
+      ctx.fillStyle = nc.shield ? C.blue : C.yellow; ctx.beginPath(); ctx.moveTo(18, 0); ctx.lineTo(-8, -14); ctx.lineTo(-8, 14); ctx.fill();
+      ctx.restore();
+    }
+  }
 
   // velocímetro en segmentos: girasol → hueso al matar → tomate al romper tanques
   const n = 24, bw = Math.min(260, w * .26), bx = w / 2 - bw / 2, sw = bw / n;
@@ -769,11 +938,14 @@ function hud(sp) {
 
   ctx.textAlign = 'right';
   const R = w - 108 - SAFE.r;
-  const info = `NIVEL ${level} · ${fmt(G.time)} · ${score} PTS`;
+  const info = `NÚCLEOS ${G.cores.filter(c => c.dead).length}/${G.cores.length} · NIVEL ${level} · ${fmt(G.time)} · ${score} PTS`;
   fit([info], R - bx - bw - 16, 26); ink(info, R, top - 1, C.paper, 1);
   ctx.font = JF(18); ctx.fillStyle = C.muted; ctx.fillText(`SEMILLA ${seed}`, R, top + 24);
 
-  if (level === 1 && G.time < 7) {
+  if (G.cannon) {
+    ctx.textAlign = 'center'; fit(['APUNTÁ EL CAÑÓN Y SOLTÁ · ROMPÉ TODOS LOS NÚCLEOS'], w * .9, 30);
+    ink('APUNTÁ EL CAÑÓN Y SOLTÁ · ROMPÉ TODOS LOS NÚCLEOS', w / 2, h * .22, C.yellow, 2);
+  } else if (level === 1 && G.time < 7) {
     ctx.globalAlpha = Math.min(1, 7 - G.time); ctx.textAlign = 'center';
     const tips = COARSE ? ['ARRASTRÁ Y SOLTÁ: LANZARTE · TOQUE: SALTO', 'CARTAS ↘ · DOBLE TOQUE: REPETIR ÚLTIMA'] : ['ARRASTRÁ EL MOUSE: LANZARTE · CLIC/ESPACIO: SALTO · 1-3: CARTAS AL CURSOR · Q/CLIC DER.: REPETIR'];
     fit(tips, COARSE ? w * .44 : w * .9, 24);
@@ -818,8 +990,8 @@ function frame(now) {
     acc += rdt * (G.slow > 0 ? .25 : 1);
     while (acc >= STEP && state === 'play') { update(STEP); acc -= STEP; }
   } else if (G?.demo) { // detrás del menú la cámara recorre un mapa de muestra
-    G.time += rdt; P.x += 110 * rdt; P.y = H * T - 250;
-    if (P.x > G.goal.x) cam.x = P.x = G.start.x;
+    G.time += rdt; P.x += 110 * rdt; P.y = G.H * T * .5 + Math.sin(G.time * .3) * G.H * T * .3;
+    if (P.x > G.W * T) cam.x = P.x = 0;
   }
   render(rdt);
   requestAnimationFrame(frame);
@@ -872,6 +1044,9 @@ function drawMenu() {
   }).join('');
   $('#cnt').textContent = `${build.length}/3`;
   $('#play').disabled = build.length !== 3;
+  $('#passives').innerHTML = Object.entries(PASSIVES).map(([id, p]) =>
+    `<button data-id="${id}" class="card${id === passive ? ' on' : ''}" data-slot="P"><em>PASIVA</em><b>${p.n}</b><span>${p.d}</span></button>`).join('');
+  $('#pcnt').textContent = passive ? PASSIVES[passive].n : 'ninguna';
   $('#inv').textContent = `Slingshot: ${CFG.inverted ? 'invertido (tirás hacia atrás)' : 'directo (arrastrás hacia donde vas)'}`;
 }
 $('#cards').onclick = e => {
@@ -880,6 +1055,12 @@ $('#cards').onclick = e => {
   const id = b.dataset.id;
   build = build.includes(id) ? build.filter(x => x !== id) : [...build, id].slice(-3);
   save('inercia.build', build); drawMenu();
+};
+$('#passives').onclick = e => {
+  const b = e.target.closest('button');
+  if (!b) return;
+  passive = passive === b.dataset.id ? null : b.dataset.id;
+  save('inercia.passive', passive); drawMenu();
 };
 $('#inv').onclick = () => { CFG.inverted = !CFG.inverted; save('inercia.inv', CFG.inverted); drawMenu(); };
 $('#play').onclick = () => {
@@ -906,7 +1087,7 @@ function gameOver() {
     ['Reintentar este mapa', () => { score = 0; startLevel(); }], ['Cambiar build', showMenu]);
 }
 
-$('#tick').textContent = ' ≥ 650 PX/S BORRA ✦ TANQUES PIDEN 1000 ✦ 2 LANZAMIENTOS EN EL AIRE ✦ APUNTAR EN EL AIRE TE FRENA ✦ SUELO O KILL RECARGAN ✦ NADA TE FRENA ✦'.repeat(4);
+$('#tick').textContent = ' ≥ 650 PX/S BORRA ✦ ROMPÉ LOS NÚCLEOS ✦ LA BARRA ES TODO ✦ ORBES Y KILLS RECARGAN ✦ MÁS ESTILO, MÁS BARRA ✦ MOVETE O MORÍ ✦'.repeat(4);
 resize(); world(rand(), 3); G.demo = true; cam = {x: P.x, y: P.y, z: 1}; drawMenu(); fsLabel(); requestAnimationFrame(frame);
 </script>
 </body>
