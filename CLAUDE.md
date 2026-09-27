@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Design-decision IDs like `D-03`, `D-04`, `D-07` and phases like `F3` refer to the external plan document (not in this repo); keep those references when touching related code.
 
-`docs/integracion-mecanicas.md` holds the agreed plan (design pillars, the "no mechanic sets your velocity" rule, the chain economy for cards, and implementation phases 1–5). Read it before changing cards, planets or the chain/bar economy, and keep it updated when a phase lands.
+`docs/integracion-mecanicas.md` holds the agreed plan (design pillars, the "no mechanic sets your velocity" rule, the chain economy for cards, and implementation phases 1–5). Read it before changing cards, planets or the chain/bar economy, and keep it updated when a phase lands. Phase 1 (telemetry) lives in the `// ---------- telemetría ----------` section: per-level counters in `G.tel` (fed from `update`, `launch`, `gainChain`, `castCard` and `hurt(sx, sy, force, cause)`, which always takes a cause string), `record(won)` stores one entry in `localStorage` (`inercia.tel`) with an `econ` field for A/B comparisons, and `showMsg(..., r)` renders the stats and the 1–5 rating. The next level's seed is derived from the current one (`mulberry32(seed)`), so a starting seed reproduces the whole sequence.
 
 ## Running and deploying
 

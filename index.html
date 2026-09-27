@@ -52,6 +52,10 @@ button:focus-visible{outline:2px solid var(--sun);outline-offset:3px}
 .row{display:flex;flex-wrap:wrap;gap:12px;align-items:center}
 .tog{background:none;border:2px solid var(--slab2);padding:9px 12px;color:var(--bone)}
 .tog:hover{border-color:var(--bone)}
+.tog.on{background:var(--bone);color:var(--ink);border-color:var(--bone)}
+.stats{margin:0;padding-left:18px;font-size:12px;color:var(--soft);max-width:75ch}
+.stats b{font:400 22px/1 "Jersey 10",monospace;color:var(--sun)}
+#rate span{color:var(--muted)}
 .go{background:var(--sun);color:var(--ink);border:0;padding:12px 34px 7px;font:400 42px/1 "Jersey 10",monospace;letter-spacing:.05em;text-transform:uppercase;box-shadow:-4px 0 0 var(--red),5px 5px 0 var(--teal);transition:transform .08s,box-shadow .08s}
 .go:hover{transform:translate(-2px,-2px);box-shadow:-6px 0 0 var(--red),8px 8px 0 var(--teal)}
 .go:active{transform:translate(2px,2px);box-shadow:-2px 0 0 var(--red),2px 2px 0 var(--teal)}
@@ -116,6 +120,12 @@ kbd{font:600 11px/1.6 "IBM Plex Mono",monospace;background:var(--bone);color:var
       <button id="mus" class="tog"></button>
       <button id="snd" class="tog"></button>
     </div>
+    <h2>Telemetría</h2>
+    <ul id="tel" class="stats"></ul>
+    <div class="row">
+      <button id="telcopy" class="tog">Copiar datos (JSON)</button>
+      <button id="telclr" class="tog">Borrar datos</button>
+    </div>
     <div class="help">
       <div><b>Teléfono</b><ul>
         <li>Lado de movimiento (izquierdo por defecto): arrastrá y soltá para lanzarte; toque = salto</li>
@@ -147,6 +157,8 @@ kbd{font:600 11px/1.6 "IBM Plex Mono",monospace;background:var(--bone);color:var
   <div class="wrap">
     <h1 id="mt"></h1>
     <p id="mb"></p>
+    <ul id="ms" class="stats" hidden></ul>
+    <div id="rate" class="row" hidden><span>¿Cómo se sintió?</span><button class="tog" data-v="1">1</button><button class="tog" data-v="2">2</button><button class="tog" data-v="3">3</button><button class="tog" data-v="4">4</button><button class="tog" data-v="5">5</button></div>
     <div class="row"><button id="m1" class="go"></button><button id="m2" class="tog"></button></div>
   </div>
 </div>
@@ -412,7 +424,8 @@ const FX = {ca: true, retro: true, ...load('inercia.fx', {})};
 function world(sd, lv) {
   M = {...MODS, ...PASSIVES[passive]?.m};
   const L = genLevel(sd, lv);
-  G = {...L, shots: [], splats: [], fx: [], time: 0, combo: 0, comboT: 0, shake: 0, kills: 0, slow: 0, stop: 0, ab: 0, glitch: 0, style: 0, cannon: true};
+  G = {...L, shots: [], splats: [], fx: [], time: 0, combo: 0, comboT: 0, shake: 0, kills: 0, slow: 0, stop: 0, ab: 0, glitch: 0, style: 0, cannon: true,
+       tel: {t: 0, fast: 0, dist: 0, peak: 0, cards: 0, used: {}, got: 0, wasted: 0, chainLaunch: 0, chainCard: 0, hits: 0, why: {}, cause: null}};
   P = {x: L.start.x, y: L.start.y - 13.01, vx: 0, vy: 0, r: 13, hp: 3, bar: barMax(), cold: 0, hovering: false, hoverT: 0, stored: 0, chain: 0,
        grounded: false, rock: null, safe: false, floor: false, inv: 0, parry: 0, ricochet: 0, trailT: 0, pound: false, pu: {turbo: 0, inf: 0, shield: 0}, trail: []};
   for (const o of G.orbs) if (o.pl) { o.x = o.pl.x + Math.cos(o.a) * o.d; o.y = o.pl.y + Math.sin(o.a) * o.d; }
@@ -532,11 +545,12 @@ function launch(dx, dy) {
   const v = launchVec(dx, dy);
   if (!v) return;
   sfx(G.cannon ? 'cannon' : 'launch', Math.hypot(v.vx, v.vy) / CFG.launchMax);
-  P.bar -= v.cost; if (v.chain) P.chain--; G.cannon = false;
+  P.bar -= v.cost; if (v.chain) { P.chain--; G.tel.chainLaunch++; } G.cannon = false;
   P.vx = v.vx; P.vy = v.vy; P.pound = false; endHover();
 }
 // cadena: premio por romper algo; hit-stop corto para que se sienta el golpe
 function gainChain(stop) {
+  if (P.chain >= CFG.chainMax) G.tel.wasted++; else G.tel.got++;
   P.chain = Math.min(CFG.chainMax, P.chain + 1); G.stop = Math.max(G.stop, stop);
   fx('ring', {x: P.x, y: P.y, r: 30, c: C.yellow});
 }
@@ -565,7 +579,7 @@ function castCard(i, dir) {
   if (d.aim && !dir) dir = defaultAim();
   if (d.cast(dir?.x, dir?.y) === false) return;
   addStyle(i !== lastCard ? 12 : 4); // variar cartas da más estilo
-  sfx('card');
+  sfx('card'); G.tel.cards++; G.tel.used[c.id] = 1;
   c.cd = d.cd; lastCard = i;
 }
 // golpe letal: los mini-jefes aguantan varios
@@ -613,8 +627,9 @@ function parryOk() {
   for (const c of hand) c.cd = 0;
   fx('ring', {x: P.x, y: P.y, r: 60, c: C.paper});
 }
-function hurt(sx, sy, force) {
+function hurt(sx, sy, force, cause) {
   if (!force && (P.inv > 0 || P.pu.shield > 0)) return;
+  G.tel.hits++; G.tel.why[cause] = (G.tel.why[cause] || 0) + 1; G.tel.cause = cause;
   P.hp--; P.inv = 1.2; G.combo = 0; sfx('hurt'); addStyle(-120); G.shake = .3; G.ab = 6; G.glitch = .4;
   P.chain = 0; P.bar = Math.max(0, P.bar - CFG.hurtBar); // un golpe también te quita opciones de escape
   const n = norm(P.x - sx, P.y - sy); // empujón lejos del golpe (en un planeta, hacia afuera)
@@ -651,8 +666,9 @@ function update(dt) {
     sp = Math.hypot(P.vx, P.vy);
     const vmax = CFG.maxSpeed * boost();
     if (sp > vmax) { P.vx *= vmax / sp; P.vy *= vmax / sp; sp = vmax; }
+    const tl = G.tel; tl.t += dt; tl.dist += sp * dt; tl.peak = Math.max(tl.peak, sp); if (sp >= CFG.coldSpeed) tl.fast += dt;
     P.trail.push({x: P.x, y: P.y, t: .45, k: P.trailT > 0});
-    if ([-P.r + 2, P.r - 2].some(ox => { const y = P.y + P.r - 1; return tileAt(Math.floor((P.x + ox) / T), Math.floor(y / T)) === '^' && y % T > T / 2; })) hurt(P.x, P.y + T);
+    if ([-P.r + 2, P.r - 2].some(ox => { const y = P.y + P.r - 1; return tileAt(Math.floor((P.x + ox) / T), Math.floor(y / T)) === '^' && y % T > T / 2; })) hurt(P.x, P.y + T, false, 'pinchos');
     // move or die: ir lento te enfría; el hover lo pausa y las zonas seguras (planetas y baldosas teal) lo descargan
     // el suelo sólido enfría ×floorCold aunque vayas rápido; con invulnerabilidad el frío se queda lleno y pega apenas termina
     if (P.safe) {
@@ -663,7 +679,7 @@ function update(dt) {
     else P.cold = Math.max(0, P.cold - dt * 2 / CFG.coldTime);
     if (P.cold >= 1) {
       if (P.inv > 0 || P.pu.shield > 0) P.cold = 1;
-      else { P.cold = 0; if (!P.floor) addBar(CFG.coldRefill); fx('ring', {x: P.x, y: P.y, r: 50, c: P.floor ? C.red : C.blue}); hurt(P.x, P.y + 10); }
+      else { P.cold = 0; if (!P.floor) addBar(CFG.coldRefill); fx('ring', {x: P.x, y: P.y, r: 50, c: P.floor ? C.red : C.blue}); hurt(P.x, P.y + 10, false, P.floor ? 'frío en el suelo' : 'frío'); }
     }
   }
   P.trail = P.trail.filter(p => (p.t -= dt) > 0);
@@ -738,7 +754,7 @@ function update(dt) {
         strike(e);
         if (e.dead) { P.vx *= .9; P.vy *= .9; }
         else { const n = norm(P.x - e.x, P.y - e.y), s = sp * .6; P.vx = n.x * s; P.vy = n.y * s; } // rebote contra el jefe
-      } else if (!(e.iframe > 0)) hurt(e.x, e.y);
+      } else if (!(e.iframe > 0)) hurt(e.x, e.y, false, e.boss ? 'mini-jefe' : FOE[e.type]);
     }
     if (P.trail.some(p => p.k && Math.hypot(p.x - e.x, p.y - e.y) < e.r + 10)) strike(e);
   }
@@ -752,7 +768,7 @@ function update(dt) {
     if (solid(tileAt(Math.floor(s.x / T), Math.floor(s.y / T))) || insidePlanet(s.x, s.y)) s.t = 0;
     if (hid || s.t <= 0) continue;
     const d = Math.hypot(s.x - P.x, s.y - P.y);
-    if (d < P.r + 5) { s.t = 0; if (P.parry > 0) parryOk(); else hurt(s.x, s.y); }
+    if (d < P.r + 5) { s.t = 0; if (P.parry > 0) parryOk(); else hurt(s.x, s.y, false, 'bala'); }
     else if (d < P.r + 30 && !s.near) { s.near = true; addStyle(15); }
   }
   G.shots = G.shots.filter(s => s.t > 0);
@@ -1388,6 +1404,43 @@ const SFX = {
 };
 function sfx(n, a) { if (ac && AU.sfx && ac.state === 'running') SFX[n](a); }
 
+// ---------- telemetría (fase 1 de docs/integracion-mecanicas.md) ----------
+// cada nivel terminado deja un registro en localStorage para comparar economías de cartas con las mismas semillas.
+// métrica principal: fracción del tiempo sobre coldSpeed × cartas distintas usadas; de control: cadenas desperdiciadas
+const FOE = {W: 'caminante', F: 'volador', S: 'torreta', T: 'tanque'};
+let telLog = load('inercia.tel', []);
+const num = (x, d = 2) => x.toLocaleString('es-AR', {maximumFractionDigits: d});
+const pct = x => `${Math.round(x * 100)} %`;
+function record(won) {
+  const tl = G.tel, t = Math.max(tl.t, 1e-6), fast = tl.fast / t, distinct = Object.keys(tl.used).length;
+  const r = {when: Date.now(), econ: 'cooldown', seed, level, build: hand.map(c => c.id), passive, won, time: +G.time.toFixed(1),
+    fast: +fast.toFixed(3), avg: Math.round(tl.dist / t), peak: Math.round(tl.peak), cpm: +(tl.cards / t * 60).toFixed(2), distinct,
+    main: +(fast * distinct).toFixed(3), got: tl.got, wasted: tl.wasted, chainLaunch: tl.chainLaunch, chainCard: tl.chainCard,
+    hits: tl.hits, why: tl.why, cause: won ? null : tl.cause, rating: null};
+  telLog = [...telLog, r].slice(-300); save('inercia.tel', telLog);
+  return r;
+}
+function statsHTML(r) {
+  const all = r.got + r.wasted, why = Object.entries(r.why).map(([k, n]) => n > 1 ? `${k} ×${n}` : k).join(', ');
+  return [
+    `<b>${num(r.main)}</b> métrica principal (movimiento × cartas distintas)`,
+    `${pct(r.fast)} del tiempo a ≥ ${CFG.coldSpeed} px/s · media ${r.avg} · pico ${r.peak} px/s`,
+    `${num(r.cpm, 1)} cartas/min · ${r.distinct} de ${r.build.length} distintas`,
+    `${all} cadenas · ${r.wasted} desperdiciadas (${pct(all ? r.wasted / all : 0)}) · ${r.chainLaunch} en lanzamientos · ${r.chainCard} en cartas`,
+    `${r.hits} golpe${r.hits === 1 ? '' : 's'}${why ? ` (${why})` : ''}${r.cause ? ` · te borró: ${r.cause}` : ''}`,
+  ].map(l => `<li>${l}</li>`).join('');
+}
+function telSummary() {
+  const by = {};
+  for (const r of telLog) (by[r.econ] ??= []).push(r);
+  const rows = Object.entries(by).map(([k, rs]) => {
+    const avg = f => rs.reduce((a, r) => a + f(r), 0) / rs.length, all = rs.reduce((a, r) => a + r.got + r.wasted, 0);
+    const rated = rs.filter(r => r.rating), nota = rated.length ? ` · nota ${num(rated.reduce((a, r) => a + r.rating, 0) / rated.length, 1)}` : '';
+    return `<li><b>${k}</b> · ${rs.length} niveles · principal ${num(avg(r => r.main))} · movimiento ${pct(avg(r => r.fast))} · ${num(avg(r => r.distinct), 1)} cartas distintas · desperdicio ${pct(all ? rs.reduce((a, r) => a + r.wasted, 0) / all : 0)}${nota}</li>`;
+  });
+  return rows.join('') || '<li>Sin datos todavía: terminá un nivel (ganando o perdiendo).</li>';
+}
+
 // ---------- menú y mensajes ----------
 function drawMenu() {
   const all = Object.entries(CARDS), total = String(all.length).padStart(2, '0');
@@ -1406,6 +1459,7 @@ function drawMenu() {
   $('#retro').textContent = `Filtro retro (scanlines, grano): ${FX.retro ? 'sí' : 'no'}`;
   $('#mus').textContent = `Música: ${AU.music ? 'sí' : 'no'}`;
   $('#snd').textContent = `Efectos de sonido: ${AU.sfx ? 'sí' : 'no'}`;
+  $('#tel').innerHTML = telSummary();
 }
 $('#cards').onclick = e => {
   const b = e.target.closest('button');
@@ -1426,6 +1480,12 @@ $('#ca').onclick = () => { FX.ca = !FX.ca; save('inercia.fx', FX); drawMenu(); }
 $('#retro').onclick = () => { FX.retro = !FX.retro; save('inercia.fx', FX); drawMenu(); };
 $('#mus').onclick = () => { AU.music = !AU.music; save('inercia.audio', AU); audioInit(); drawMenu(); };
 $('#snd').onclick = () => { AU.sfx = !AU.sfx; save('inercia.audio', AU); drawMenu(); sfx('ui'); };
+$('#telcopy').onclick = () => {
+  const s = JSON.stringify(telLog);
+  if (!navigator.clipboard) return toast('Este navegador no deja copiar: abrí el juego por https o localhost.');
+  navigator.clipboard.writeText(s).then(() => toast(`Copiados ${telLog.length} registros (JSON).`), () => toast('No se pudo copiar.'));
+};
+$('#telclr').onclick = () => { if (telLog.length && confirm(`¿Borrar ${telLog.length} registros de telemetría?`)) { telLog = []; save('inercia.tel', telLog); drawMenu(); } };
 $('#play').onclick = () => {
   level = 1; score = 0; seed = parseInt($('#seed').value) || rand();
   if (COARSE) fullscreen(true, true);
@@ -1433,8 +1493,15 @@ $('#play').onclick = () => {
 };
 $('#pause').onclick = () => showMenu();
 function showMenu() { state = 'menu'; drawMenu(); $('#msg').hidden = $('#hb').hidden = true; $('#menu').hidden = false; }
-function showMsg(title, body, [l1, f1], [l2, f2]) {
+function showMsg(title, body, [l1, f1], [l2, f2], r) {
   state = 'msg'; $('#hb').hidden = true;
+  $('#ms').hidden = $('#rate').hidden = !r;
+  if (r) {
+    $('#ms').innerHTML = statsHTML(r);
+    const marks = () => $('#rate').querySelectorAll('button').forEach(b => b.classList.toggle('on', +b.dataset.v === r.rating));
+    $('#rate').onclick = e => { const b = e.target.closest('button'); if (!b) return; r.rating = +b.dataset.v; save('inercia.tel', telLog); marks(); };
+    marks();
+  }
   $('#mt').textContent = title; $('#mt').dataset.t = title; $('#mb').textContent = body;
   $('#m1').textContent = l1; $('#m1').onclick = f1;
   $('#m2').textContent = l2; $('#m2').onclick = f2;
@@ -1443,13 +1510,16 @@ function showMsg(title, body, [l1, f1], [l2, f2]) {
 function win() {
   sfx('win');
   score += Math.max(0, Math.round(2000 - G.time * 15));
+  const r = record(true);
+  // la semilla del nivel siguiente sale de la actual: la misma semilla inicial repite toda la secuencia (para comparar economías)
   showMsg(`Nivel ${level} limpio`, `${fmt(G.time)} · ${G.kills} kills · ${score} pts · semilla ${seed}`,
-    ['Siguiente nivel', () => { level++; seed = rand(); startLevel(); }], ['Cambiar build', showMenu]);
+    ['Siguiente nivel', () => { level++; seed = Math.floor(mulberry32(seed)() * 1e6); startLevel(); }], ['Cambiar build', showMenu], r);
 }
 function gameOver() {
   sfx('over');
+  const r = record(false);
   showMsg('Te borraron', `Nivel ${level} · ${score} pts · semilla ${seed}`,
-    ['Reintentar este mapa', () => { score = 0; startLevel(); }], ['Cambiar build', showMenu]);
+    ['Reintentar este mapa', () => { score = 0; startLevel(); }], ['Cambiar build', showMenu], r);
 }
 
 $('#tick').textContent = ' ≥ 650 PX/S BORRA ✦ CADA ORBE ES UN LANZAMIENTO GRATIS ✦ LOS PLANETAS TE ATRAEN ✦ ROMPÉ LOS NÚCLEOS ✦ EN EL CAÑÓN NADIE TE VE ✦ MOVETE O MORÍ ✦'.repeat(4);

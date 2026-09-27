@@ -15,7 +15,7 @@ Resultado de la revisión crítica del gameplay (septiembre 2026) frente a la vi
 2. **Ninguna mecánica fija tu velocidad**: todas suman, redirigen o convierten la inercia que traés. Única excepción: **Lanzar-me**, la carta de rescate.
 3. **Una sola moneda de decisión**: cada carta cuesta 1 ◆ (cadena) y tiene un cooldown mínimo anti-spam de ~1 s. Si acierta, devuelve 1 ◆, **una sola vez por activación** (las ◆ extra salen de los kills u orbes que provoque).
 
-## Fase 1 — Telemetría y línea base
+## Fase 1 — Telemetría y línea base ✅
 
 Objetivo: poder comparar economías con datos (hace falta antes de tocar nada).
 
