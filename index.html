@@ -185,8 +185,10 @@ const CFG = {
   dash: {range: 380, wind: .5, speed: 900, time: .45, tired: .8, cd: 1.6}, // volador: carga, embiste hacia donde vas a estar y queda aturdido
   burst: {range: 650, aim: .6, n: 3, gap: .12, speed: 520, cd: 2.4},     // torreta: láser de aviso y ráfaga con puntería predictiva
   leap: {tell: .3, time: .6, h: 70, cd: 1.4},                          // caminante: salta hacia vos si te posás en su planeta
-  // cúmulos de orbes por chunk: a veces ninguno; cada cúmulo con 1–6 orbes dispersos (σ en baldosas) que pueden quedar pegados
-  orbs: {empty: .25, clusters: [1, 3], size: [1, 6], spread: [1, 4]},
+  // cúmulos de orbes por chunk: a veces ninguno; cada cúmulo con 1–5 orbes dispersos (σ en baldosas), a ≥ gap px entre sí
+  orbs: {empty: .25, clusters: [1, 3], size: [1, 5], spread: [2, 6], gap: 44}, // gap: px mínimos entre orbes
+  view: {w: 800, h: 500}, // mundo visible (px) a velocidad baja: más chico = todo se ve más grande
+  parry: {time: .4, reach: 36}, // contraataque: ventana (s) y alcance extra (px) más allá del contacto
   // mapa en chunks (ancho × alto): crece por nivel hasta el tope (H-11)
   map: {w: 16, h: 8, dw: 2, dh: 1, maxW: 24, maxH: 12},
   planetGap: 2250,    // separación mínima entre superficies de planetas: 2 lanzamientos a tope
@@ -290,9 +292,9 @@ function genLevel(seed, lvl) {
   }
   // orbes en cúmulos: cada chunk tiene 0 o varios; dentro del cúmulo la dispersión es gaussiana (pueden quedar pegados o lejos)
   const gauss = () => Math.sqrt(-2 * Math.log(1 - r())) * Math.cos(2 * Math.PI * r()), O = CFG.orbs;
-  const cells = new Map(), cell = (x, y) => Math.floor(x / 22) + ',' + Math.floor(y / 22); // grilla para no encimar orbes
+  const g = O.gap, cells = new Map(), cell = (x, y) => Math.floor(x / g) + ',' + Math.floor(y / g); // grilla para no encimar orbes
   const put = o => { const k = cell(o.x, o.y); cells.has(k) ? cells.get(k).push(o) : cells.set(k, [o]); L.orbs.push(o); };
-  const apart = (x, y) => { for (let i = -1; i <= 1; i++) for (let j = -1; j <= 1; j++) if ((cells.get(cell(x + i * 22, y + j * 22)) || []).some(o => Math.hypot(o.x - x, o.y - y) < 22)) return false; return true; };
+  const apart = (x, y) => { for (let i = -1; i <= 1; i++) for (let j = -1; j <= 1; j++) if ((cells.get(cell(x + i * g, y + j * g)) || []).some(o => Math.hypot(o.x - x, o.y - y) < g)) return false; return true; };
   const free = (x, y) => !solid(grid[Math.floor(y / T)]?.[Math.floor(x / T)] ?? '#') && !L.planets.some(p => Math.hypot(p.x - x, p.y - y) < p.r + 30)
     && Math.hypot(x - L.start.x, y - L.start.y) > 90 && apart(x, y);
   for (const o of L.orbs.splice(0)) put(o);
@@ -391,7 +393,7 @@ const CARDS = {
     endHover(); P.vy = Math.min(P.vy, -600);
     fx('ring', {x: P.x, y: P.y, r: 150, c: C.paper});
   }},
-  parry: {n: 'Contraataque', d: 'Parry de 0.25 s. Si acierta, recarga todo.', cd: 3, cast() { P.parry = .25; }},
+  parry: {n: 'Contraataque', d: 'Parry de 0.4 s con alcance: mata al que te toque y devuelve las balas. Si acierta, recarga todo.', cd: 3, cast() { P.parry = CFG.parry.time; G.tel.parry[1]++; }},
   estela: {n: 'Estela', d: 'Tu estela mata durante 2 s.', cd: 6, cast() { P.trailT = 2; }},
   bala: {n: 'Tiempo bala', d: 'Todo al 25 % durante 1.5 s reales.', cd: 8, cast() { G.slow = 1.5; }},
 };
@@ -425,7 +427,7 @@ function world(sd, lv) {
   M = {...MODS, ...PASSIVES[passive]?.m};
   const L = genLevel(sd, lv);
   G = {...L, shots: [], splats: [], fx: [], time: 0, combo: 0, comboT: 0, shake: 0, kills: 0, slow: 0, stop: 0, ab: 0, glitch: 0, style: 0, cannon: true,
-       tel: {t: 0, fast: 0, dist: 0, peak: 0, cards: 0, used: {}, got: 0, wasted: 0, chainLaunch: 0, chainCard: 0, hits: 0, why: {}, cause: null}};
+       tel: {t: 0, fast: 0, dist: 0, peak: 0, cards: 0, used: {}, got: 0, wasted: 0, chainLaunch: 0, chainCard: 0, hits: 0, why: {}, cause: null, parry: [0, 0]}};
   P = {x: L.start.x, y: L.start.y - 13.01, vx: 0, vy: 0, r: 13, hp: 3, bar: barMax(), cold: 0, hovering: false, hoverT: 0, stored: 0, chain: 0,
        grounded: false, rock: null, safe: false, floor: false, inv: 0, parry: 0, ricochet: 0, trailT: 0, pound: false, pu: {turbo: 0, inf: 0, shield: 0}, trail: []};
   for (const o of G.orbs) if (o.pl) { o.x = o.pl.x + Math.cos(o.a) * o.d; o.y = o.pl.y + Math.sin(o.a) * o.d; }
@@ -623,6 +625,7 @@ function shock(x, y, r) {
   for (let i = 0; i < 8; i++) splat(x + (Math.random() - .5) * r * 1.4, y + (Math.random() - .5) * 10, 5 + Math.random() * 9, C.yellow);
 }
 function parryOk() {
+  if (P.parry > 0) G.tel.parry[0]++;
   P.parry = 0; P.inv = .5; addBar(barMax()); addStyle(100); sfx('parry');
   for (const c of hand) c.cd = 0;
   fx('ring', {x: P.x, y: P.y, r: 60, c: C.paper});
@@ -741,12 +744,12 @@ function update(dt) {
       else if (e.burst > 0) {
         if ((e.gap -= dt * sm) <= 0) {
           lead(); const g = norm(e.tx - e.x, e.ty - e.y);
-          G.shots.push({x: e.x, y: e.y, vx: g.x * B.speed, vy: g.y * B.speed, t: 4});
+          G.shots.push({x: e.x, y: e.y, vx: g.x * B.speed, vy: g.y * B.speed, t: 4, from: e});
           e.gap = B.gap; if (--e.burst <= 0) e.cd = B.cd;
         }
       } else if (d < B.range && (e.cd -= dt * sm) <= 0) e.aim = B.aim;
     }
-    if (!hid && Math.hypot(P.x - e.x, P.y - e.y) < P.r + e.r) {
+    if (!hid && Math.hypot(P.x - e.x, P.y - e.y) < P.r + e.r + (P.parry > 0 ? CFG.parry.reach : 0)) {
       const tough = e.type === 'T' || e.boss;
       const lethal = P.parry > 0 || P.pu.shield > 0 || sp >= (tough ? CFG.tankSpeed : CFG.killSpeed) || (!tough && (e.stun > 0 || e.mark > 0));
       if (lethal) {
@@ -766,9 +769,13 @@ function update(dt) {
     s.vx += f.ax * dt; s.vy += f.ay * dt;
     s.x += s.vx * dt; s.y += s.vy * dt; s.t -= dt;
     if (solid(tileAt(Math.floor(s.x / T), Math.floor(s.y / T))) || insidePlanet(s.x, s.y)) s.t = 0;
+    if (s.mine) { const e = s.t > 0 && G.enemies.find(e => !e.dead && Math.hypot(e.x - s.x, e.y - s.y) < e.r + 6); if (e) { s.t = 0; strike(e); } continue; }
     if (hid || s.t <= 0) continue;
     const d = Math.hypot(s.x - P.x, s.y - P.y);
-    if (d < P.r + 5) { s.t = 0; if (P.parry > 0) parryOk(); else hurt(s.x, s.y, false, 'bala'); }
+    if (P.parry > 0 && d < P.r + 5 + CFG.parry.reach) { // la bala vuelve al doble hacia el que la disparó
+      const o = s.from && !s.from.dead ? s.from : s, g = o === s ? norm(-s.vx, -s.vy) : norm(o.x - s.x, o.y - s.y), v = Math.hypot(s.vx, s.vy) * 2;
+      s.vx = g.x * v; s.vy = g.y * v; s.mine = true; s.t = 2; parryOk();
+    } else if (d < P.r + 5) { s.t = 0; hurt(s.x, s.y, false, 'bala'); }
     else if (d < P.r + 30 && !s.near) { s.near = true; addStyle(15); }
   }
   G.shots = G.shots.filter(s => s.t > 0);
@@ -949,7 +956,7 @@ function render(rdt) {
   ctx = hctx; sc = dpr; ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.clearRect(0, 0, cv.width, cv.height);
   if (!G) return;
   const sp = Math.hypot(P.vx, P.vy);
-  const zt = Math.min(h / 600, w / 960) * (1 - Math.min(.22, sp / 7000));
+  const zt = Math.min(h / CFG.view.h, w / CFG.view.w) * (1 - Math.min(.22, sp / 7000));
   cam.z += (zt - cam.z) * Math.min(1, rdt * 3);
   const vw = w / cam.z, vh = h / cam.z;
   // la cámara deja al jugador arriba, del lado opuesto a la fila de cartas, para que no tape la acción (D-04)
@@ -1084,7 +1091,7 @@ function render(rdt) {
     }
     if (e.mark > 0) { ctx.strokeStyle = C.yellow; ctx.lineWidth = 2.5; ctx.setLineDash([5, 5]); circle(e.x, e.y, e.r + 7.5); ctx.stroke(); ctx.setLineDash([]); }
   }
-  for (const s of G.shots) { ctx.fillStyle = C.red; circle(s.x, s.y, 7.5); ctx.fill(); ctx.fillStyle = C.paper; ctx.fillRect(s.x - 2.5, s.y - 2.5, 5, 5); }
+  for (const s of G.shots) { ctx.fillStyle = s.mine ? C.teal : C.red; circle(s.x, s.y, 7.5); ctx.fill(); ctx.fillStyle = C.paper; ctx.fillRect(s.x - 2.5, s.y - 2.5, 5, 5); }
 
   // estela
   ctx.lineCap = ctx.lineJoin = 'round';
@@ -1107,7 +1114,7 @@ function render(rdt) {
     if (sp >= CFG.tankSpeed) { circle(P.x, P.y, P.r + 11); ctx.stroke(); }
     if (P.cold > .3) { ctx.globalAlpha = P.cold; ctx.strokeStyle = P.floor ? C.red : C.blueHi; ctx.lineWidth = 2.5; ctx.setLineDash([5, 5]); circle(P.x, P.y, P.r + 4 + (1 - P.cold) * 20); ctx.stroke(); ctx.setLineDash([]); ctx.globalAlpha = 1; }
     if (P.pu.shield > 0) { ctx.strokeStyle = C.blue; ctx.lineWidth = 5; circle(P.x, P.y, P.r + 16); ctx.stroke(); }
-    if (P.parry > 0) { ctx.strokeStyle = C.paper; ctx.lineWidth = 5; circle(P.x, P.y, P.r + 20); ctx.stroke(); }
+    if (P.parry > 0) { ctx.strokeStyle = C.paper; ctx.lineWidth = 5; circle(P.x, P.y, P.r + CFG.parry.reach); ctx.stroke(); }
     for (let i = 0; i < P.chain; i++) { // cadenas: rombos que orbitan al jugador
       const a = G.time * 5 + i * Math.PI * 2 / CFG.chainMax, cx = P.x + Math.cos(a) * (P.r + 10), cy = P.y + Math.sin(a) * (P.r + 10);
       ctx.save(); ctx.translate(cx, cy); ctx.rotate(Math.PI / 4); ctx.fillStyle = C.ink; ctx.fillRect(-5, -5, 10, 10); ctx.fillStyle = C.yellow; ctx.fillRect(-3.5, -3.5, 7, 7); ctx.restore();
@@ -1416,7 +1423,7 @@ function record(won) {
   const r = {when: Date.now(), econ: 'cooldown', seed, level, build: hand.map(c => c.id), passive, won, time: +G.time.toFixed(1),
     fast: +fast.toFixed(3), avg: Math.round(tl.dist / t), peak: Math.round(tl.peak), cpm: +(tl.cards / t * 60).toFixed(2), distinct,
     main: +(fast * distinct).toFixed(3), got: tl.got, wasted: tl.wasted, chainLaunch: tl.chainLaunch, chainCard: tl.chainCard,
-    hits: tl.hits, why: tl.why, cause: won ? null : tl.cause, rating: null};
+    hits: tl.hits, why: tl.why, cause: won ? null : tl.cause, parry: tl.parry, rating: null}; // parry: [aciertos, intentos]
   telLog = [...telLog, r].slice(-300); save('inercia.tel', telLog);
   return r;
 }

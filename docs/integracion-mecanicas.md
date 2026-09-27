@@ -31,6 +31,19 @@ Objetivo: poder comparar economías con datos (hace falta antes de tocar nada).
 - **Métrica de control**: cadenas desperdiciadas. Por encima del ~20 %, la economía está mal calibrada.
 - Protocolo: al menos 5 niveles por modo, con las mismas semillas.
 
+### Primera lectura (9 niveles, build bala/parry/estela, septiembre 2026)
+
+- **Movimiento sano**: ~85 % del tiempo sobre `coldSpeed`, rapidez media ~1070, pico ~3200. Nota media 4,5.
+- **Cadenas desperdiciadas: ~32 %** (206 de 650), muy por encima del umbral; en los niveles largos llega a 40–90 %. Los orbes vienen en cúmulos demasiado densos: pasar por uno llena `chainMax` y el resto se pierde.
+- **El volador causa 17 de 22 golpes**; el resto, sueltos (bala, mini-jefe, frío en el suelo).
+- Cualitativo: los elementos se ven chicos (sobre todo en el teléfono) y el contraataque casi nunca acierta.
+
+Ajustes aplicados por eso:
+
+- Cámara más cerca: `CFG.view` pasa de 960 × 600 a 800 × 500 de mundo visible (todo ×1,2).
+- Orbes más dispersos: `spread` [1, 4] → [2, 6] baldosas, `size` [1, 6] → [1, 5] y separación mínima 22 → 44 px (`gap`).
+- Contraataque (adelanto de la fase 5, sin la economía de ◆): ventana 0,25 → 0,4 s, **alcance** de 36 px más allá del contacto (el anillo lo muestra) y **devuelve las balas** al doble hacia la torreta que las disparó; matan a lo que toquen. La telemetría guarda `parry: [aciertos, intentos]`.
+
 ## Fase 2 — Economía de ◆ en las cartas
 
 - Interruptor en *Ajustes*: **Economía: cooldown / cadenas**, para el A/B de la fase 1.
