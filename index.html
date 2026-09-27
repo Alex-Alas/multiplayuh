@@ -182,7 +182,7 @@ const CFG = {
   orbLift: 520,       // orbe = mini trampolín: además de frenar te empuja hacia arriba (vy mínimo −orbLift); en un cúmulo no se acumula
   hurtBar: 25,        // barra que perdés con cada golpe (además de la vida y las cadenas)
   floorCold: 3, floorCost: 1.5, // suelo sólido: el frío sube ×floorCold aunque vayas rápido; lanzarte desde ahí cuesta ×floorCost
-  dash: {range: 380, wind: .5, speed: 900, time: .45, tired: .8, cd: 1.6}, // volador: carga, embiste hacia donde vas a estar y queda aturdido
+  dash: {range: 380, wind: .7, lock: .25, speed: 900, time: .45, tired: .8, cd: 1.6}, // volador: carga (el último `lock` s apunta fijo), embiste hacia donde vas a estar y queda aturdido; también si te pega
   burst: {range: 650, aim: .6, n: 3, gap: .12, speed: 520, cd: 2.4},     // torreta: láser de aviso y ráfaga con puntería predictiva
   leap: {tell: .3, time: .6, h: 70, cd: 1.4},                          // caminante: salta hacia vos si te posás en su planeta
   // cúmulos de orbes por chunk: a veces ninguno; cada cúmulo con 1–5 orbes dispersos (σ en baldosas), a ≥ gap px entre sí
@@ -708,7 +708,7 @@ function update(dt) {
       if (e.dash > 0) { e.look = Math.atan2(e.vy, e.vx); if ((e.dash -= dt) <= 0) { e.stun = D.tired; e.vx *= .3; e.vy *= .3; } }
       else if (e.wind > 0) {
         e.vx *= .85; e.vy *= .85;
-        if (e.wind > .15 && !hid) { const t = Math.min(.6, d / D.speed); e.tx = P.x + P.vx * t; e.ty = P.y + P.vy * t; } // el último tramo queda fijo: se puede esquivar
+        if (e.wind > D.lock && !hid) { const t = Math.min(.6, d / D.speed); e.tx = P.x + P.vx * t; e.ty = P.y + P.vy * t; } // el último tramo queda fijo: se puede esquivar
         e.look = Math.atan2(e.ty - e.y, e.tx - e.x);
         if ((e.wind -= dt * sm) <= 0) { const g = norm(e.tx - e.x, e.ty - e.y); e.vx = g.x * D.speed * sm; e.vy = g.y * D.speed * sm; e.dash = D.time; }
       } else if (e.stun <= 0 && d < D.range && e.cd <= 0) { e.wind = D.wind; e.cd = D.cd + Math.random(); }
@@ -757,7 +757,10 @@ function update(dt) {
         strike(e);
         if (e.dead) { P.vx *= .9; P.vy *= .9; }
         else { const n = norm(P.x - e.x, P.y - e.y), s = sp * .6; P.vx = n.x * s; P.vy = n.y * s; } // rebote contra el jefe
-      } else if (!(e.iframe > 0)) hurt(e.x, e.y, false, e.boss ? 'mini-jefe' : FOE[e.type]);
+      } else if (!(e.iframe > 0)) {
+        hurt(e.x, e.y, false, e.boss ? 'mini-jefe' : FOE[e.type]);
+        if (e.type === 'F' && !e.boss) { e.dash = e.wind = 0; e.stun = CFG.dash.tired; e.vx *= .3; e.vy *= .3; } // el volador que te pega queda aturdido: se puede castigar
+      }
     }
     if (P.trail.some(p => p.k && Math.hypot(p.x - e.x, p.y - e.y) < e.r + 10)) strike(e);
   }
