@@ -44,6 +44,19 @@ Ajustes aplicados por eso:
 - Orbes más dispersos: `spread` [1, 4] → [2, 6] baldosas, `size` [1, 6] → [1, 5] y separación mínima 22 → 44 px (`gap`).
 - Contraataque (adelanto de la fase 5, sin la economía de ◆): ventana 0,25 → 0,4 s, **alcance** de 36 px más allá del contacto (el anillo lo muestra) y **devuelve las balas** al doble hacia la torreta que las disparó; matan a lo que toquen. La telemetría guarda `parry: [aciertos, intentos]`.
 
+### Segunda lectura (12 niveles, 7 semillas, misma build, septiembre 2026)
+
+- **Movimiento estable**: ~88 % sobre `coldSpeed` en las victorias, rapidez media ~1170, pico ~3200. Ganadas 6 de 12; las 10 notas dadas, todas 5.
+- **Cualitativo**: el contraataque con alcance se siente útil y salva situaciones de desorientación; buscar los núcleos por el mapa funciona.
+- **El volador causa 22 de 23 golpes** y 5 de 6 muertes (la otra, frío en el suelo). Las muertes rápidas (13–15 s) son golpes de volador encadenados.
+- **`chainCard` = 0 siempre**: las cartas no tocan la economía de ◆; la fase 2 sigue sin datos.
+- **Cadenas desperdiciadas: ~23 %** (149 de 651), mejor que el 32 % pero por encima del umbral; crece con el mapa (4–7 en el nivel 1, 23–39 en los niveles 4–5). A revisar con la fase 2, que les da un uso.
+
+Ajustes aplicados por eso (volador):
+
+- Carga más larga: `dash.wind` 0,5 → 0,7 s, y el apuntado queda fijo los últimos `dash.lock` = 0,25 s (antes 0,15): más tiempo para leerlo y esquivarlo.
+- **El volador que te pega queda aturdido** (`dash.tired`), igual que al fallar la embestida: el golpe se puede castigar de inmediato en vez de encadenarse.
+
 ## Fase 2 — Economía de ◆ en las cartas
 
 - Interruptor en *Ajustes*: **Economía: cooldown / cadenas**, para el A/B de la fase 1.
